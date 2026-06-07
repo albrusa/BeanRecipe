@@ -1,0 +1,1610 @@
+"use client";
+
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  Fragment,
+} from "react";
+import {
+  Coffee,
+  Settings,
+  Scale,
+  Play,
+  Pause,
+  RotateCcw,
+  X,
+  Plus,
+  Edit2,
+  Trash2,
+  ChevronRight,
+  CheckCircle,
+  AlertCircle,
+  Clock,
+  Droplets,
+  Flame,
+} from "lucide-react";
+
+// ─────────────────────────────────────────────
+// TYPES
+// ─────────────────────────────────────────────
+
+type BrewMethodType = "v60" | "moka" | "aeropress";
+
+interface BrewMethod {
+  id: string;
+  type: BrewMethodType;
+  grindClicks: number;
+  notes: string;
+}
+
+interface CoffeeBean {
+  id: string;
+  name: string;
+  origin: string;
+  roaster: string;
+  roastDate: string;
+  process: string;
+  notes: string;
+  methods: BrewMethod[];
+}
+
+interface GrinderConfig {
+  calibrationOffset: number;
+}
+
+interface RecipeStep {
+  time: number; // seconds from start
+  instruction: string;
+  amount?: number;
+  isAlert: boolean;
+}
+
+// ─────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────
+
+const CLICKS_PER_ROTATION = 30;
+const CLICKS_PER_NUMBER = 3;
+
+const METHOD_LABEL: Record<BrewMethodType, string> = {
+  v60: "V60",
+  moka: "Moka",
+  aeropress: "Aeropress",
+};
+
+const METHOD_BADGE: Record<BrewMethodType, string> = {
+  v60: "bg-amber-100 text-amber-800 border border-amber-200",
+  moka: "bg-red-100 text-red-800 border border-red-200",
+  aeropress: "bg-sky-100 text-sky-800 border border-sky-200",
+};
+
+// ─────────────────────────────────────────────
+// UTILS
+// ─────────────────────────────────────────────
+
+function calcGrindPosition(clicks: number, offset: number): string {
+  const total = clicks + offset;
+  if (total < 0) return `${clicks} clics (fora de rang)`;
+  const rotations = Math.floor(total / CLICKS_PER_ROTATION);
+  const rem = total % CLICKS_PER_ROTATION;
+  const num = Math.floor(rem / CLICKS_PER_NUMBER);
+  const extra = rem % CLICKS_PER_NUMBER;
+  const parts: string[] = [];
+  if (rotations === 1) parts.push("1 volta");
+  else if (rotations > 1) parts.push(`${rotations} voltes`);
+  parts.push(`Nº ${num}`);
+  if (extra > 0) parts.push(`+${extra} clic${extra > 1 ? "s" : ""}`);
+  return parts.join(" · ");
+}
+
+/** V60 Mètode 4:6 (Tetsu Kasuya) — 5 abocats iguals cada 45 s */
+function buildV60Steps(water: number, ratio: number): RecipeStep[] {
+  const coffee = water / ratio;
+  const pour = water / 5;
+  return [
+    {
+      time: 0,
+      instruction: `Posa ${coffee.toFixed(1)} g de cafè al filtre. 1r abocat: vessa ${pour.toFixed(0)} g d'aigua a 93 °C de manera circular.`,
+      amount: pour,
+      isAlert: true,
+    },
+    {
+      time: 45,
+      instruction: `2n abocat: vessa ${pour.toFixed(0)} g d'aigua. (Ajusta dolçor/acidesa.)`,
+      amount: pour,
+      isAlert: true,
+    },
+    {
+      time: 90,
+      instruction: `3r abocat: vessa ${pour.toFixed(0)} g d'aigua. (Comença la força.)`,
+      amount: pour,
+      isAlert: true,
+    },
+    {
+      time: 135,
+      instruction: `4t abocat: vessa ${pour.toFixed(0)} g d'aigua.`,
+      amount: pour,
+      isAlert: true,
+    },
+    {
+      time: 180,
+      instruction: `5è i darrer abocat: vessa ${pour.toFixed(0)} g d'aigua.`,
+      amount: pour,
+      isAlert: true,
+    },
+    {
+      time: 270,
+      instruction: "El cafè ha acabat de drenar (±4–5 min totals). Gaudeix-ne!",
+      isAlert: false,
+    },
+  ];
+}
+
+/** Aeropress Recepta Definitiva (James Hoffmann) */
+function buildAeropressSteps(water: number): RecipeStep[] {
+  const coffee = ((water / 200) * 11).toFixed(1);
+  return [
+    {
+      time: 0,
+      instruction: `Posa ${coffee} g de cafè a l'Aeropress invertit. Vessa tots els ${water} g d'aigua a 100 °C ràpidament. Comença el temporitzador.`,
+      amount: water,
+      isAlert: true,
+    },
+    {
+      time: 10,
+      instruction: "Agita vigorosament durant ~10 segons per saturar tot el cafè.",
+      isAlert: false,
+    },
+    {
+      time: 120,
+      instruction:
+        "Minut 2:00 — Agita suaument amb moviments circulars (sense esquitxar).",
+      isAlert: true,
+    },
+    {
+      time: 150,
+      instruction:
+        "Minut 2:30 — Col·loca el filtre i la tapa. Gira l'Aeropress i comença a pressionar molt suaument cap avall.",
+      isAlert: true,
+    },
+    {
+      time: 180,
+      instruction:
+        "Minut 3:00 — Atura de pressionar. Cafè llest. Que ho gaudeixis!",
+      isAlert: true,
+    },
+  ];
+}
+
+function fmtTime(s: number): string {
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
+}
+
+function genId(): string {
+  return Math.random().toString(36).slice(2, 11);
+}
+
+// ─────────────────────────────────────────────
+// GRINDER SECTION
+// ─────────────────────────────────────────────
+
+function GrinderSection({
+  cfg,
+  onSave,
+}: {
+  cfg: GrinderConfig;
+  onSave: (c: GrinderConfig) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(String(cfg.calibrationOffset));
+
+  const save = () => {
+    onSave({ calibrationOffset: parseInt(val) || 0 });
+    setEditing(false);
+  };
+
+  const examplePos = calcGrindPosition(25, cfg.calibrationOffset);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+        {/* Card header */}
+        <div className="bg-gradient-to-r from-stone-800 to-stone-700 px-5 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center">
+                <Settings className="w-5 h-5 text-amber-300" />
+              </div>
+              <div>
+                <h2 className="font-bold text-white">1Zpresso J</h2>
+                <p className="text-stone-400 text-xs">30 clics/volta · 3 clics/nº de dial</p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                setEditing((e) => !e);
+                setVal(String(cfg.calibrationOffset));
+              }}
+              className="text-xs text-amber-300 hover:text-amber-200 font-medium px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+            >
+              {editing ? "Cancel·lar" : "Editar"}
+            </button>
+          </div>
+        </div>
+
+        <div className="p-5">
+          {editing ? (
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium text-stone-700 block mb-1.5">
+                  Valor inicial de calibració (clics)
+                </label>
+                <input
+                  type="number"
+                  value={val}
+                  onChange={(e) => setVal(e.target.value)}
+                  className="w-full border border-stone-300 rounded-xl px-4 py-3 text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm"
+                  placeholder="0"
+                />
+                <p className="text-xs text-stone-400 mt-2 leading-relaxed">
+                  El punt zero real del teu molinet. Si el mecanisme té joc
+                  físic abans de contact, posa un nombre negatiu (ex: −2).
+                  Normalment és 0.
+                </p>
+              </div>
+              <button
+                onClick={save}
+                className="w-full bg-stone-800 text-white rounded-xl py-3 text-sm font-semibold hover:bg-stone-900 transition-colors"
+              >
+                Guardar configuració
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-amber-50 rounded-xl p-3 text-center border border-amber-100">
+                <p className="text-[10px] uppercase tracking-widest text-amber-500 font-semibold mb-1">
+                  Calibració
+                </p>
+                <p className="text-2xl font-extrabold text-amber-900">
+                  {cfg.calibrationOffset >= 0 ? "+" : ""}
+                  {cfg.calibrationOffset}
+                </p>
+                <p className="text-xs text-amber-600">clics</p>
+              </div>
+              <div className="bg-stone-50 rounded-xl p-3 text-center border border-stone-100">
+                <p className="text-[10px] uppercase tracking-widest text-stone-400 font-semibold mb-1">
+                  Resolució
+                </p>
+                <p className="text-2xl font-extrabold text-stone-700">30</p>
+                <p className="text-xs text-stone-400">clics/volta</p>
+              </div>
+              <div className="bg-stone-50 rounded-xl p-3 text-center border border-stone-100">
+                <p className="text-[10px] uppercase tracking-widest text-stone-400 font-semibold mb-1">
+                  Ex. 25 clics
+                </p>
+                <p className="text-[11px] font-bold text-amber-700 leading-tight mt-1">
+                  {examplePos}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* How-to info card */}
+      <div className="bg-amber-50 rounded-2xl border border-amber-100 p-5">
+        <h3 className="font-semibold text-amber-900 text-sm mb-3">
+          Com llegir la posició del dial
+        </h3>
+        <div className="space-y-2 text-sm text-amber-800">
+          {[
+            ["Voltes completes", "El nombre de rotacions senceres del mecanisme."],
+            ["Número de dial (Nº)", "El número visible en el ring exterior (0–9)."],
+            ["+X clics", "Clics addicionals per sobre del número principal."],
+          ].map(([t, d]) => (
+            <div key={t} className="flex gap-2">
+              <span className="font-semibold flex-shrink-0">{t}:</span>
+              <span className="text-amber-700/80">{d}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 bg-amber-100 rounded-xl p-3 text-xs text-amber-700 font-mono">
+          Exemple: 47 clics → 1 volta · Nº 5 · +2 clics
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// COFFEE FORM MODAL
+// ─────────────────────────────────────────────
+
+function CoffeeFormModal({
+  coffee,
+  onSave,
+  onClose,
+}: {
+  coffee?: CoffeeBean;
+  onSave: (c: CoffeeBean) => void;
+  onClose: () => void;
+}) {
+  const [f, setF] = useState({
+    name: coffee?.name ?? "",
+    origin: coffee?.origin ?? "",
+    roaster: coffee?.roaster ?? "",
+    roastDate: coffee?.roastDate ?? "",
+    process: coffee?.process ?? "",
+    notes: coffee?.notes ?? "",
+  });
+
+  const set = (k: string, v: string) =>
+    setF((prev) => ({ ...prev, [k]: v }));
+
+  const fields: Array<[string, string, string, string?]> = [
+    ["name", "Nom *", "ex: Ethiopia Yirgacheffe Kochere"],
+    ["origin", "Origen", "ex: Etiòpia, comarca Sidama"],
+    ["roaster", "Torredor", "ex: Nomad Coffee, Right Side Coffee"],
+    ["process", "Procés", "ex: Natural, Rentat, Honey, Anaerobi"],
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-3 sm:p-6">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[92vh] flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-100">
+          <h3 className="font-bold text-stone-800 text-lg">
+            {coffee ? "Editar cafè" : "Afegir nou cafè"}
+          </h3>
+          <button
+            onClick={onClose}
+            className="text-stone-400 hover:text-stone-600"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto p-5 space-y-4 flex-1">
+          {fields.map(([k, label, ph]) => (
+            <div key={k}>
+              <label className="text-sm font-medium text-stone-600 block mb-1.5">
+                {label}
+              </label>
+              <input
+                value={(f as Record<string, string>)[k]}
+                onChange={(e) => set(k, e.target.value)}
+                placeholder={ph}
+                className="w-full border border-stone-200 rounded-xl px-4 py-2.5 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-400 placeholder:text-stone-300"
+              />
+            </div>
+          ))}
+
+          <div>
+            <label className="text-sm font-medium text-stone-600 block mb-1.5">
+              Data de torrat
+            </label>
+            <input
+              type="date"
+              value={f.roastDate}
+              onChange={(e) => set("roastDate", e.target.value)}
+              className="w-full border border-stone-200 rounded-xl px-4 py-2.5 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-stone-600 block mb-1.5">
+              Notes personals
+            </label>
+            <textarea
+              value={f.notes}
+              onChange={(e) => set("notes", e.target.value)}
+              placeholder="Sabors, aromes, valoració, maridatge..."
+              rows={3}
+              className="w-full border border-stone-200 rounded-xl px-4 py-2.5 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none placeholder:text-stone-300"
+            />
+          </div>
+        </div>
+
+        <div className="p-5 border-t border-stone-100">
+          <button
+            disabled={!f.name.trim()}
+            onClick={() =>
+              onSave({
+                id: coffee?.id ?? genId(),
+                ...f,
+                methods: coffee?.methods ?? [],
+              })
+            }
+            className="w-full bg-amber-800 text-white rounded-xl py-3.5 font-bold disabled:opacity-40 hover:bg-amber-900 transition-colors"
+          >
+            {coffee ? "Guardar canvis" : "Afegir cafè"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// METHOD FORM MODAL
+// ─────────────────────────────────────────────
+
+function MethodFormModal({
+  method,
+  onSave,
+  onClose,
+}: {
+  method?: BrewMethod;
+  onSave: (m: BrewMethod) => void;
+  onClose: () => void;
+}) {
+  const [type, setType] = useState<BrewMethodType>(method?.type ?? "v60");
+  const [clicks, setClicks] = useState(String(method?.grindClicks ?? 20));
+  const [notes, setNotes] = useState(method?.notes ?? "");
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/60 p-3 sm:p-6">
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-100">
+          <h3 className="font-bold text-stone-800">
+            {method ? "Editar mètode" : "Nou mètode de preparació"}
+          </h3>
+          <button onClick={onClose}>
+            <X className="w-5 h-5 text-stone-400" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-5">
+          <div>
+            <label className="text-sm font-medium text-stone-600 block mb-2">
+              Tipus de preparació
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {(["v60", "moka", "aeropress"] as BrewMethodType[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setType(t)}
+                  className={`py-3 rounded-xl text-sm font-bold transition-all border-2 ${
+                    type === t
+                      ? "bg-stone-800 text-white border-stone-800"
+                      : "bg-stone-50 text-stone-500 border-stone-200 hover:border-stone-300"
+                  }`}
+                >
+                  {METHOD_LABEL[t]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-stone-600 block mb-1.5">
+              Grau de moltura (clics totals)
+            </label>
+            <div className="flex gap-3 items-center">
+              <input
+                type="range"
+                min={0}
+                max={90}
+                value={parseInt(clicks) || 0}
+                onChange={(e) => setClicks(e.target.value)}
+                className="flex-1"
+              />
+              <input
+                type="number"
+                min={0}
+                value={clicks}
+                onChange={(e) => setClicks(e.target.value)}
+                className="w-16 border border-stone-200 rounded-xl px-3 py-2 text-stone-800 text-center focus:outline-none focus:ring-2 focus:ring-amber-400 text-sm font-bold"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-stone-600 block mb-1.5">
+              Notes (opcional)
+            </label>
+            <input
+              type="text"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Temperatura, variació, observació..."
+              className="w-full border border-stone-200 rounded-xl px-4 py-2.5 text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-400 text-sm placeholder:text-stone-300"
+            />
+          </div>
+
+          <button
+            onClick={() =>
+              onSave({
+                id: method?.id ?? genId(),
+                type,
+                grindClicks: parseInt(clicks) || 0,
+                notes,
+              })
+            }
+            className="w-full bg-amber-800 text-white rounded-xl py-3.5 font-bold hover:bg-amber-900 transition-colors"
+          >
+            {method ? "Guardar" : "Afegir mètode"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// PREPARE QUICK MODAL (water amount selector)
+// ─────────────────────────────────────────────
+
+function PrepareQuickModal({
+  method,
+  coffeeName,
+  onStart,
+  onClose,
+}: {
+  method: BrewMethod;
+  coffeeName: string;
+  onStart: (steps: RecipeStep[], title: string) => void;
+  onClose: () => void;
+}) {
+  const defaultWater = method.type === "v60" ? 300 : 200;
+  const [water, setWater] = useState(defaultWater);
+  const [ratio, setRatio] = useState(15);
+
+  const coffee =
+    method.type === "v60"
+      ? (water / ratio).toFixed(1)
+      : ((water / 200) * 11).toFixed(1);
+
+  const handleStart = () => {
+    const steps =
+      method.type === "v60"
+        ? buildV60Steps(water, ratio)
+        : buildAeropressSteps(water);
+    const title = `${METHOD_LABEL[method.type]} · ${coffeeName}`;
+    onStart(steps, title);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/60 p-3 sm:p-6">
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-100">
+          <div>
+            <h3 className="font-bold text-stone-800">Preparar {METHOD_LABEL[method.type]}</h3>
+            <p className="text-xs text-stone-400 mt-0.5">{coffeeName}</p>
+          </div>
+          <button onClick={onClose}>
+            <X className="w-5 h-5 text-stone-400" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-5">
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <label className="text-sm font-medium text-stone-600">
+                Volum d'aigua
+              </label>
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  value={water}
+                  min={50}
+                  max={800}
+                  onChange={(e) => setWater(Number(e.target.value))}
+                  className="w-16 border border-stone-200 rounded-lg px-2 py-1 text-sm text-stone-800 text-right focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+                <span className="text-sm text-stone-400">ml</span>
+              </div>
+            </div>
+            <input
+              type="range"
+              min={50}
+              max={600}
+              step={10}
+              value={water}
+              onChange={(e) => setWater(Number(e.target.value))}
+              className="w-full"
+            />
+          </div>
+
+          {method.type === "v60" && (
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <label className="text-sm font-medium text-stone-600">
+                  Ràtio
+                </label>
+                <span className="text-sm font-bold text-amber-700">1:{ratio}</span>
+              </div>
+              <input
+                type="range"
+                min={12}
+                max={20}
+                step={0.5}
+                value={ratio}
+                onChange={(e) => setRatio(Number(e.target.value))}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-stone-400 mt-1">
+                <span>1:12 (fort)</span>
+                <span>1:20 (suau)</span>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-amber-50 rounded-2xl p-4 flex justify-around border border-amber-100">
+            <div className="text-center">
+              <p className="text-xs text-amber-600/70 uppercase tracking-wide mb-1">Cafè</p>
+              <p className="text-3xl font-extrabold text-amber-900">{coffee}</p>
+              <p className="text-xs text-amber-700">grams</p>
+            </div>
+            <div className="w-px bg-amber-200" />
+            <div className="text-center">
+              <p className="text-xs text-amber-600/70 uppercase tracking-wide mb-1">Aigua</p>
+              <p className="text-3xl font-extrabold text-amber-900">{water}</p>
+              <p className="text-xs text-amber-700">ml / g</p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleStart}
+            className="w-full flex items-center justify-center gap-2.5 bg-amber-800 text-white rounded-xl py-4 font-bold text-base hover:bg-amber-900 transition-colors shadow-md shadow-amber-800/20"
+          >
+            <Play className="w-5 h-5" />
+            Iniciar temporitzador
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// COFFEE DETAIL PANEL
+// ─────────────────────────────────────────────
+
+function CoffeeDetailPanel({
+  coffee,
+  grinderCfg,
+  onClose,
+  onEditCoffee,
+  onDeleteCoffee,
+  onAddMethod,
+  onEditMethod,
+  onDeleteMethod,
+  onPrepare,
+}: {
+  coffee: CoffeeBean;
+  grinderCfg: GrinderConfig;
+  onClose: () => void;
+  onEditCoffee: () => void;
+  onDeleteCoffee: () => void;
+  onAddMethod: (m: BrewMethod) => void;
+  onEditMethod: (m: BrewMethod) => void;
+  onDeleteMethod: (id: string) => void;
+  onPrepare: (steps: RecipeStep[], title: string) => void;
+}) {
+  const [methodModal, setMethodModal] = useState<{
+    open: boolean;
+    editing?: BrewMethod;
+  }>({ open: false });
+  const [prepareModal, setPrepareModal] = useState<BrewMethod | null>(null);
+
+  const confirmDeleteCoffee = () => {
+    if (confirm(`Eliminar "${coffee.name}"? Aquesta acció no es pot desfer.`))
+      onDeleteCoffee();
+  };
+
+  const confirmDeleteMethod = (id: string) => {
+    if (confirm("Eliminar aquest mètode?")) onDeleteMethod(id);
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 flex">
+        <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+        <div className="relative ml-auto w-full max-w-lg bg-stone-50 flex flex-col h-full shadow-2xl">
+          {/* Panel header */}
+          <div className="bg-gradient-to-br from-amber-900 to-amber-800 text-white px-4 pt-6 pb-5">
+            <div className="flex items-start justify-between gap-3">
+              <button
+                onClick={onClose}
+                className="mt-0.5 w-8 h-8 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 flex-shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <div className="flex-1 min-w-0">
+                <h2 className="font-extrabold text-xl leading-tight">
+                  {coffee.name}
+                </h2>
+                {(coffee.roaster || coffee.origin) && (
+                  <p className="text-amber-200 text-sm mt-1">
+                    {[coffee.roaster, coffee.origin]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-2 flex-shrink-0 mt-0.5">
+                <button
+                  onClick={onEditCoffee}
+                  className="flex items-center gap-1 text-xs text-amber-200 hover:text-white px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 font-medium"
+                >
+                  <Edit2 className="w-3.5 h-3.5" /> Editar
+                </button>
+                <button
+                  onClick={confirmDeleteCoffee}
+                  className="flex items-center gap-1 text-xs text-red-300 hover:text-red-100 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 font-medium"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 mt-3">
+              {coffee.roastDate && (
+                <span className="text-xs bg-white/15 px-2.5 py-1 rounded-full font-medium">
+                  🗓 {coffee.roastDate}
+                </span>
+              )}
+              {coffee.process && (
+                <span className="text-xs bg-white/15 px-2.5 py-1 rounded-full font-medium">
+                  {coffee.process}
+                </span>
+              )}
+            </div>
+            {coffee.notes && (
+              <p className="text-amber-100/70 text-sm mt-3 italic leading-snug">
+                "{coffee.notes}"
+              </p>
+            )}
+          </div>
+
+          {/* Methods list */}
+          <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-stone-600 text-xs uppercase tracking-widest">
+                Mètodes de preparació
+              </h3>
+              <button
+                onClick={() => setMethodModal({ open: true })}
+                className="flex items-center gap-1.5 text-sm text-amber-700 font-semibold hover:text-amber-900"
+              >
+                <Plus className="w-4 h-4" /> Afegir
+              </button>
+            </div>
+
+            {coffee.methods.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-14 text-stone-400">
+                <Coffee className="w-14 h-14 mb-4 opacity-20" />
+                <p className="font-semibold text-sm">Sense mètodes guardats</p>
+                <p className="text-xs mt-1 text-stone-400 text-center max-w-[200px]">
+                  Afegeix el grau de moltura per a cada preparació.
+                </p>
+                <button
+                  onClick={() => setMethodModal({ open: true })}
+                  className="mt-5 bg-amber-800 text-white px-5 py-2 rounded-xl text-sm font-semibold hover:bg-amber-900"
+                >
+                  Afegir primer mètode
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {coffee.methods.map((m) => {
+                  const pos = calcGrindPosition(
+                    m.grindClicks,
+                    grinderCfg.calibrationOffset
+                  );
+                  const canPrepare =
+                    m.type === "v60" || m.type === "aeropress";
+                  return (
+                    <div
+                      key={m.id}
+                      className="bg-white rounded-2xl border border-stone-200 overflow-hidden"
+                    >
+                      <div className="px-4 py-3 flex items-center justify-between border-b border-stone-100">
+                        <span
+                          className={`text-xs font-bold px-2.5 py-1 rounded-full ${METHOD_BADGE[m.type]}`}
+                        >
+                          {METHOD_LABEL[m.type]}
+                        </span>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() =>
+                              setMethodModal({ open: true, editing: m })
+                            }
+                            className="text-stone-300 hover:text-amber-700 transition-colors"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => confirmDeleteMethod(m.id)}
+                            className="text-stone-300 hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="px-4 py-3 space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-stone-400">Moltura</span>
+                          <span className="font-bold text-stone-700">
+                            {m.grindClicks} clics
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-stone-400">Posició al dial</span>
+                          <span className="font-bold text-amber-700">{pos}</span>
+                        </div>
+                        {m.notes && (
+                          <p className="text-xs text-stone-400 italic pt-1">
+                            {m.notes}
+                          </p>
+                        )}
+                      </div>
+
+                      {canPrepare && (
+                        <div className="px-4 pb-3">
+                          <button
+                            onClick={() => setPrepareModal(m)}
+                            className="w-full flex items-center justify-center gap-2 bg-amber-800 text-white rounded-xl py-2.5 text-sm font-bold hover:bg-amber-900 transition-colors"
+                          >
+                            <Play className="w-4 h-4" /> Preparar ara
+                          </button>
+                        </div>
+                      )}
+                      {m.type === "moka" && (
+                        <div className="mx-4 mb-3 bg-red-50 rounded-xl px-3 py-2 flex items-center gap-2">
+                          <Flame className="w-4 h-4 text-red-400 flex-shrink-0" />
+                          <p className="text-xs text-red-600">
+                            La Moka no disposa de temporitzador guiat. Usa el
+                            grau de moltura com a referència.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {methodModal.open && (
+        <MethodFormModal
+          method={methodModal.editing}
+          onSave={(m) => {
+            methodModal.editing ? onEditMethod(m) : onAddMethod(m);
+            setMethodModal({ open: false });
+          }}
+          onClose={() => setMethodModal({ open: false })}
+        />
+      )}
+
+      {prepareModal && (
+        <PrepareQuickModal
+          method={prepareModal}
+          coffeeName={coffee.name}
+          onStart={(steps, title) => {
+            onPrepare(steps, title);
+            setPrepareModal(null);
+          }}
+          onClose={() => setPrepareModal(null)}
+        />
+      )}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────
+// RECIPE CALCULATOR SECTION
+// ─────────────────────────────────────────────
+
+function RecipeCalcSection({
+  onStartTimer,
+}: {
+  onStartTimer: (steps: RecipeStep[], title: string) => void;
+}) {
+  const [method, setMethod] = useState<"v60" | "aeropress">("v60");
+  const [water, setWater] = useState(300);
+  const [ratio, setRatio] = useState(15);
+
+  const coffee =
+    method === "v60"
+      ? (water / ratio).toFixed(1)
+      : ((water / 200) * 11).toFixed(1);
+
+  const steps =
+    method === "v60" ? buildV60Steps(water, ratio) : buildAeropressSteps(water);
+
+  return (
+    <div className="space-y-4">
+      {/* Config card */}
+      <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-10 h-10 rounded-xl bg-amber-700 flex items-center justify-center">
+            <Scale className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h2 className="font-bold text-stone-800 text-lg">
+              Calculadora de receptes
+            </h2>
+            <p className="text-xs text-stone-400">
+              Proporcions i passos automàtics
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 mb-5">
+          {(["v60", "aeropress"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMethod(m)}
+              className={`py-3.5 rounded-xl text-sm font-bold transition-all ${
+                method === m
+                  ? "bg-amber-800 text-white shadow-sm"
+                  : "bg-stone-100 text-stone-500 hover:bg-stone-200"
+              }`}
+            >
+              {m === "v60" ? "☕ V60 Mètode 4:6" : "🔵 Aeropress Hoffmann"}
+            </button>
+          ))}
+        </div>
+
+        <div className="space-y-5">
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <label className="text-sm font-medium text-stone-700">
+                Volum d'aigua
+              </label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  value={water}
+                  min={50}
+                  max={800}
+                  onChange={(e) => setWater(Number(e.target.value))}
+                  className="w-16 border border-stone-200 rounded-lg px-2 py-1 text-sm font-bold text-stone-800 text-right focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+                <span className="text-sm text-stone-400 font-medium">ml</span>
+              </div>
+            </div>
+            <input
+              type="range"
+              min={50}
+              max={800}
+              step={10}
+              value={water}
+              onChange={(e) => setWater(Number(e.target.value))}
+              className="w-full"
+            />
+            <div className="flex justify-between text-xs text-stone-300 mt-1">
+              <span>50 ml</span>
+              <span>800 ml</span>
+            </div>
+          </div>
+
+          {method === "v60" && (
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <label className="text-sm font-medium text-stone-700">
+                  Ràtio cafè / aigua
+                </label>
+                <span className="text-sm font-bold text-amber-700">
+                  1:{ratio}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={12}
+                max={20}
+                step={0.5}
+                value={ratio}
+                onChange={(e) => setRatio(Number(e.target.value))}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-stone-300 mt-1">
+                <span>1:12 (molt fort)</span>
+                <span>1:20 (suau)</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Result display */}
+        <div className="mt-5 bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-5 border border-amber-100">
+          <div className="flex justify-around items-center">
+            <div className="text-center">
+              <p className="text-[10px] uppercase tracking-widest text-amber-500 font-bold mb-1">
+                Cafè mòlt
+              </p>
+              <p className="text-5xl font-extrabold text-amber-900 tabular-nums">
+                {coffee}
+              </p>
+              <p className="text-sm text-amber-600 font-medium mt-0.5">
+                grams
+              </p>
+            </div>
+            <div className="text-amber-200 text-3xl font-thin">·</div>
+            <div className="text-center">
+              <p className="text-[10px] uppercase tracking-widest text-amber-500 font-bold mb-1">
+                Aigua
+              </p>
+              <p className="text-5xl font-extrabold text-amber-900 tabular-nums">
+                {water}
+              </p>
+              <p className="text-sm text-amber-600 font-medium mt-0.5">
+                ml / g
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Steps preview */}
+      <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+        <h3 className="font-bold text-stone-700 mb-1">
+          {method === "v60"
+            ? "V60 · Mètode 4:6 (Tetsu Kasuya)"
+            : "Aeropress · Recepta Definitiva (James Hoffmann)"}
+        </h3>
+        <p className="text-xs text-stone-400 mb-4">
+          {method === "v60"
+            ? "5 abocats iguals (20% cada un) cada 45 segons"
+            : "Infusió total + pressió suau al final"}
+        </p>
+
+        <div className="space-y-3">
+          {steps.map((step, i) => (
+            <div key={i} className="flex gap-3 items-start">
+              <span
+                className={`flex-shrink-0 text-xs font-mono font-bold px-2 py-1 rounded-lg mt-0.5 ${
+                  step.isAlert
+                    ? "bg-amber-100 text-amber-700"
+                    : "bg-stone-100 text-stone-400"
+                }`}
+              >
+                {fmtTime(step.time)}
+              </span>
+              <div className="flex-1">
+                <p className="text-sm text-stone-600 leading-snug">
+                  {step.instruction}
+                </p>
+                {step.amount && (
+                  <span className="inline-flex items-center gap-1 mt-1 text-xs font-semibold text-sky-600 bg-sky-50 px-2 py-0.5 rounded-full">
+                    <Droplets className="w-3 h-3" /> {step.amount.toFixed(0)} g
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <button
+          onClick={() =>
+            onStartTimer(
+              steps,
+              method === "v60"
+                ? `V60 4:6 · ${water} ml`
+                : `Aeropress Hoffmann · ${water} g`
+            )
+          }
+          className="mt-5 w-full flex items-center justify-center gap-3 bg-amber-800 text-white rounded-2xl py-4 font-bold text-base hover:bg-amber-900 transition-colors shadow-lg shadow-amber-800/20"
+        >
+          <Clock className="w-5 h-5" />
+          Preparar amb temporitzador
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// PREPARATION TIMER MODAL
+// ─────────────────────────────────────────────
+
+function PreparationTimerModal({
+  steps,
+  title,
+  onClose,
+}: {
+  steps: RecipeStep[];
+  title: string;
+  onClose: () => void;
+}) {
+  const [elapsed, setElapsed] = useState(0);
+  const [running, setRunning] = useState(false);
+  const [done, setDone] = useState(false);
+  const prevStepIdx = useRef(-1);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioRef = useRef<AudioContext | null>(null);
+
+  // Derived state
+  const stepIdx = steps.reduce(
+    (a, s, i) => (elapsed >= s.time ? i : a),
+    0
+  );
+  const curStep = steps[stepIdx];
+  const nxtStep = steps[stepIdx + 1] as RecipeStep | undefined;
+  const timeToNext = nxtStep ? nxtStep.time - elapsed : null;
+  const segProgress = nxtStep
+    ? Math.min(
+        100,
+        ((elapsed - curStep.time) / (nxtStep.time - curStep.time)) * 100
+      )
+    : 100;
+
+  const beep = useCallback(() => {
+    try {
+      if (!audioRef.current) {
+        audioRef.current = new (
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext })
+            .webkitAudioContext
+        )();
+      }
+      const ctx = audioRef.current;
+      const now = ctx.currentTime;
+      // Two-tone chime
+      [880, 1100].forEach((hz, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.value = hz;
+        gain.gain.setValueAtTime(0, now + i * 0.18);
+        gain.gain.linearRampToValueAtTime(0.25, now + i * 0.18 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.18 + 0.4);
+        osc.start(now + i * 0.18);
+        osc.stop(now + i * 0.18 + 0.4);
+      });
+    } catch {
+      // Audio API not available — silently skip
+    }
+  }, []);
+
+  // Alert when step changes
+  useEffect(() => {
+    if (stepIdx !== prevStepIdx.current && running && prevStepIdx.current >= 0) {
+      beep();
+    }
+    prevStepIdx.current = stepIdx;
+  }, [stepIdx, running, beep]);
+
+  // Tick
+  useEffect(() => {
+    if (running) {
+      intervalRef.current = setInterval(() => {
+        setElapsed((t) => {
+          const next = t + 1;
+          const last = steps[steps.length - 1];
+          if (next > last.time + 30) {
+            setDone(true);
+            setRunning(false);
+          }
+          return next;
+        });
+      }, 1000);
+    } else if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [running, steps]);
+
+  const reset = () => {
+    setElapsed(0);
+    setRunning(false);
+    setDone(false);
+    prevStepIdx.current = -1;
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-stone-950 select-none">
+      {/* Top bar */}
+      <div className="flex items-center justify-between px-4 pt-8 pb-3">
+        <button
+          onClick={onClose}
+          className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/10 text-white/60 hover:bg-white/20 hover:text-white transition-colors"
+        >
+          <X className="w-5 h-5" />
+        </button>
+        <p className="text-amber-400 text-sm font-semibold text-center max-w-[200px] truncate">
+          {title}
+        </p>
+        <button
+          onClick={reset}
+          className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/10 text-white/60 hover:bg-white/20 hover:text-white transition-colors"
+        >
+          <RotateCcw className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Main area */}
+      <div className="flex-1 flex flex-col items-center justify-center px-5 gap-5">
+        {/* Clock */}
+        <div className="text-center">
+          <div
+            className={`text-8xl font-mono font-black tracking-tighter tabular-nums transition-colors ${
+              done ? "text-green-400" : running ? "text-white" : "text-white/50"
+            }`}
+          >
+            {fmtTime(elapsed)}
+          </div>
+          {timeToNext !== null && !done && (
+            <p className="text-white/30 text-sm mt-2">
+              Proper pas en{" "}
+              <span className="text-amber-400 font-bold">
+                {fmtTime(timeToNext)}
+              </span>
+            </p>
+          )}
+        </div>
+
+        {/* Progress bar between steps */}
+        {!done && nxtStep && (
+          <div className="w-full max-w-xs">
+            <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-amber-500 rounded-full transition-all duration-1000 ease-linear"
+                style={{ width: `${segProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Current step */}
+        {!done ? (
+          <div
+            className={`w-full max-w-sm rounded-2xl p-5 transition-colors ${
+              curStep?.isAlert ? "bg-amber-600" : "bg-white/10"
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 mt-0.5">
+                {curStep?.isAlert ? (
+                  <AlertCircle className="w-6 h-6 text-white" />
+                ) : (
+                  <Clock className="w-6 h-6 text-white/40" />
+                )}
+              </div>
+              <p className="text-white font-semibold text-base leading-snug">
+                {curStep?.instruction}
+              </p>
+            </div>
+            {curStep?.amount && (
+              <div className="mt-3 flex items-center gap-1.5 bg-white/20 rounded-xl px-3 py-2 w-fit">
+                <Droplets className="w-4 h-4 text-sky-200" />
+                <span className="text-white font-bold text-sm">
+                  {curStep.amount.toFixed(0)} g
+                </span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="w-full max-w-sm rounded-2xl bg-green-700 p-7 text-center text-white">
+            <CheckCircle className="w-14 h-14 mx-auto mb-3" />
+            <p className="text-2xl font-extrabold">Cafè llest!</p>
+            <p className="text-green-200 text-sm mt-1.5">
+              Que ho gaudeixis molt! ☕
+            </p>
+          </div>
+        )}
+
+        {/* Upcoming steps */}
+        {!done && steps.slice(stepIdx + 1).length > 0 && (
+          <div className="w-full max-w-sm bg-white/5 rounded-2xl p-4 space-y-2.5 max-h-32 overflow-y-auto">
+            <p className="text-[10px] uppercase tracking-widest text-white/25 font-bold mb-1">
+              Pròxims passos
+            </p>
+            {steps.slice(stepIdx + 1).map((s, i) => (
+              <div key={i} className="flex gap-2.5 items-start opacity-50">
+                <span className="text-xs font-mono text-amber-400 flex-shrink-0 w-9">
+                  {fmtTime(s.time)}
+                </span>
+                <p className="text-xs text-white leading-snug line-clamp-2">
+                  {s.instruction}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Big play/pause button */}
+      <div className="px-5 pb-10 pt-4">
+        <button
+          onClick={() => setRunning((r) => !r)}
+          disabled={done}
+          className={`w-full py-5 rounded-2xl flex items-center justify-center gap-3 font-extrabold text-xl transition-all ${
+            done
+              ? "bg-white/5 text-white/20 cursor-not-allowed"
+              : running
+              ? "bg-white/15 text-white hover:bg-white/25"
+              : "bg-amber-600 text-white hover:bg-amber-500 shadow-2xl shadow-amber-900/60"
+          }`}
+        >
+          {running ? (
+            <>
+              <Pause className="w-7 h-7" /> Pausar
+            </>
+          ) : (
+            <>
+              <Play className="w-7 h-7" /> {elapsed === 0 ? "Iniciar" : "Continuar"}
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// MAIN APP
+// ─────────────────────────────────────────────
+
+const NAV_ITEMS = [
+  { id: "coffees" as const, Icon: Coffee, label: "Cafès" },
+  { id: "recipe" as const, Icon: Scale, label: "Receptes" },
+  { id: "settings" as const, Icon: Settings, label: "Molinet" },
+];
+
+export default function BeanRecipeApp() {
+  const [tab, setTab] = useState<"coffees" | "recipe" | "settings">("coffees");
+  const [coffees, setCoffees] = useState<CoffeeBean[]>([]);
+  const [grinder, setGrinder] = useState<GrinderConfig>({ calibrationOffset: 0 });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [coffeeModal, setCoffeeModal] = useState<{
+    open: boolean;
+    editing?: CoffeeBean;
+  }>({ open: false });
+  const [timer, setTimer] = useState<{
+    steps: RecipeStep[];
+    title: string;
+  } | null>(null);
+  const [ready, setReady] = useState(false);
+
+  // Hydrate from localStorage
+  useEffect(() => {
+    try {
+      const c = localStorage.getItem("brf_v1_coffees");
+      const g = localStorage.getItem("brf_v1_grinder");
+      if (c) setCoffees(JSON.parse(c));
+      if (g) setGrinder(JSON.parse(g));
+    } catch {}
+    setReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (ready) localStorage.setItem("brf_v1_coffees", JSON.stringify(coffees));
+  }, [coffees, ready]);
+
+  useEffect(() => {
+    if (ready) localStorage.setItem("brf_v1_grinder", JSON.stringify(grinder));
+  }, [grinder, ready]);
+
+  // Coffee CRUD
+  const upsertCoffee = (c: CoffeeBean) => {
+    setCoffees((prev) =>
+      prev.some((x) => x.id === c.id)
+        ? prev.map((x) => (x.id === c.id ? c : x))
+        : [...prev, c]
+    );
+    setCoffeeModal({ open: false });
+  };
+
+  const deleteCoffee = (id: string) => {
+    setCoffees((prev) => prev.filter((c) => c.id !== id));
+    setSelectedId(null);
+  };
+
+  // Method CRUD
+  const addMethod = (coffeeId: string, m: BrewMethod) =>
+    setCoffees((prev) =>
+      prev.map((c) =>
+        c.id === coffeeId ? { ...c, methods: [...c.methods, m] } : c
+      )
+    );
+
+  const editMethod = (coffeeId: string, m: BrewMethod) =>
+    setCoffees((prev) =>
+      prev.map((c) =>
+        c.id === coffeeId
+          ? { ...c, methods: c.methods.map((x) => (x.id === m.id ? m : x)) }
+          : c
+      )
+    );
+
+  const deleteMethod = (coffeeId: string, mId: string) =>
+    setCoffees((prev) =>
+      prev.map((c) =>
+        c.id === coffeeId
+          ? { ...c, methods: c.methods.filter((x) => x.id !== mId) }
+          : c
+      )
+    );
+
+  const selectedCoffee = coffees.find((c) => c.id === selectedId);
+
+  if (!ready) {
+    return (
+      <div className="min-h-screen bg-stone-50 flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-amber-700 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-stone-100 flex flex-col max-w-xl mx-auto shadow-xl">
+      {/* ── App header ── */}
+      <header className="sticky top-0 z-20 bg-amber-900 px-4 py-4 shadow-md">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 bg-amber-800 rounded-xl flex items-center justify-center shadow-inner">
+            <Coffee className="w-5 h-5 text-amber-200" />
+          </div>
+          <div>
+            <h1 className="font-black text-white text-xl leading-none tracking-tight">
+              BeanRecipe
+            </h1>
+            <p className="text-amber-300/80 text-xs mt-0.5">
+              El teu quadern de barista
+            </p>
+          </div>
+        </div>
+      </header>
+
+      {/* ── Main content ── */}
+      <main className="flex-1 overflow-y-auto pb-24 px-3 py-4 space-y-4">
+        {/* ── TAB: Cafès ── */}
+        {tab === "coffees" && (
+          <>
+            <div className="flex items-center justify-between px-1">
+              <h2 className="font-bold text-stone-700 text-lg">Els meus cafès</h2>
+              <button
+                onClick={() => setCoffeeModal({ open: true })}
+                className="flex items-center gap-1.5 bg-amber-800 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-amber-900 transition-colors shadow-sm"
+              >
+                <Plus className="w-4 h-4" /> Nou cafè
+              </button>
+            </div>
+
+            {coffees.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-stone-200 flex flex-col items-center py-16 px-8 text-center">
+                <Coffee className="w-16 h-16 text-stone-200 mb-5" />
+                <p className="font-bold text-stone-400 text-lg">
+                  Sense cafès registrats
+                </p>
+                <p className="text-stone-400 text-sm mt-2 max-w-xs leading-relaxed">
+                  Afegeix el teu primer cafè i comença a guardar els teus graus
+                  de moltura i receptes preferides.
+                </p>
+                <button
+                  onClick={() => setCoffeeModal({ open: true })}
+                  className="mt-7 bg-amber-800 text-white px-7 py-3 rounded-xl font-bold text-sm hover:bg-amber-900 shadow-md"
+                >
+                  Afegir primer cafè
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {coffees.map((coffee) => (
+                  <button
+                    key={coffee.id}
+                    onClick={() => setSelectedId(coffee.id)}
+                    className="w-full bg-white rounded-2xl border border-stone-200 px-4 py-4 text-left hover:border-amber-300 hover:shadow-sm active:scale-[0.985] transition-all"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-stone-800 truncate">
+                          {coffee.name}
+                        </p>
+                        <p className="text-sm text-stone-400 mt-0.5 truncate">
+                          {[coffee.roaster, coffee.origin]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                        {coffee.roastDate && (
+                          <p className="text-xs text-stone-300 mt-1">
+                            Torrat: {coffee.roastDate}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 ml-3 flex-shrink-0">
+                        {coffee.methods.length > 0 && (
+                          <div className="flex flex-wrap gap-1 justify-end max-w-[120px]">
+                            {coffee.methods.map((m) => (
+                              <span
+                                key={m.id}
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${METHOD_BADGE[m.type]}`}
+                              >
+                                {METHOD_LABEL[m.type]}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <ChevronRight className="w-4 h-4 text-stone-300 flex-shrink-0" />
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ── TAB: Receptes ── */}
+        {tab === "recipe" && (
+          <RecipeCalcSection
+            onStartTimer={(steps, title) => setTimer({ steps, title })}
+          />
+        )}
+
+        {/* ── TAB: Molinet ── */}
+        {tab === "settings" && (
+          <GrinderSection cfg={grinder} onSave={setGrinder} />
+        )}
+      </main>
+
+      {/* ── Bottom navigation ── */}
+      <nav className="fixed bottom-0 inset-x-0 z-20 max-w-xl mx-auto bg-white border-t border-stone-200 flex shadow-[0_-1px_12px_rgba(0,0,0,0.06)]">
+        {NAV_ITEMS.map(({ id, Icon, label }) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`flex-1 flex flex-col items-center gap-1 py-3.5 transition-colors ${
+              tab === id ? "text-amber-800" : "text-stone-400 hover:text-stone-600"
+            }`}
+          >
+            <Icon
+              className="w-5 h-5"
+              strokeWidth={tab === id ? 2.5 : 1.75}
+            />
+            <span className="text-[11px] font-semibold">{label}</span>
+          </button>
+        ))}
+      </nav>
+
+      {/* ── Coffee form modal ── */}
+      {coffeeModal.open && (
+        <CoffeeFormModal
+          coffee={coffeeModal.editing}
+          onSave={upsertCoffee}
+          onClose={() => setCoffeeModal({ open: false })}
+        />
+      )}
+
+      {/* ── Coffee detail panel ── */}
+      {selectedCoffee && (
+        <CoffeeDetailPanel
+          coffee={selectedCoffee}
+          grinderCfg={grinder}
+          onClose={() => setSelectedId(null)}
+          onEditCoffee={() => {
+            setCoffeeModal({ open: true, editing: selectedCoffee });
+            setSelectedId(null);
+          }}
+          onDeleteCoffee={() => deleteCoffee(selectedCoffee.id)}
+          onAddMethod={(m) => addMethod(selectedCoffee.id, m)}
+          onEditMethod={(m) => editMethod(selectedCoffee.id, m)}
+          onDeleteMethod={(id) => deleteMethod(selectedCoffee.id, id)}
+          onPrepare={(steps, title) => {
+            setTimer({ steps, title });
+            setSelectedId(null);
+          }}
+        />
+      )}
+
+      {/* ── Preparation timer ── */}
+      {timer && (
+        <PreparationTimerModal
+          steps={timer.steps}
+          title={timer.title}
+          onClose={() => setTimer(null)}
+        />
+      )}
+    </div>
+  );
+}
