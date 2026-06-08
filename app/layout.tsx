@@ -9,6 +9,14 @@ export const metadata: Metadata = {
   description:
     "Registra cafès, gestiona receptes V60, Moka i Aeropress, i prepara el teu cafè pas a pas.",
   manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "BeanRecipe",
+  },
+  icons: {
+    apple: "/icons/icon-192.png",
+  },
 };
 
 export const viewport: Viewport = {
