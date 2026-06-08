@@ -94,6 +94,42 @@ function buildV60Steps(water: number, ratio: number): RecipeStep[] {
   ];
 }
 
+function buildV60StandardSteps(water: number): RecipeStep[] {
+  const coffee = water / 16;
+  const preInfusion = Math.round(coffee * 3);
+  const firstPourTarget = Math.round(water * 0.6);
+  return [
+    {
+      time: 0,
+      instruction: `Posa ${coffee.toFixed(1)} g de cafè al filtre. Aboca ${preInfusion} g d'aigua per fer la pre-infusió i remena suau perquè tot el cafè es mulli.`,
+      amount: preInfusion,
+      isAlert: true,
+    },
+    {
+      time: 45,
+      instruction: `Aboca constantment fent cercles fins a arribar als ${firstPourTarget} g.`,
+      amount: firstPourTarget - preInfusion,
+      isAlert: true,
+    },
+    {
+      time: 75,
+      instruction: `Aboca la resta d'aigua fins a arribar als ${water} g. En acabar, dona un petit moviment circular (swirl) al con.`,
+      amount: water - firstPourTarget,
+      isAlert: true,
+    },
+    {
+      time: 105,
+      instruction: "Deixa que s'escorri per gravetat. Hauria d'acabar prop del minut 2:30 o 3:00.",
+      isAlert: false,
+    },
+    {
+      time: 180,
+      instruction: "El cafè ha acabat de drenar. Gaudeix-ne! ☕",
+      isAlert: false,
+    },
+  ];
+}
+
 function buildAeropressSteps(water: number): RecipeStep[] {
   const coffee = ((water / 200) * 11).toFixed(1);
   return [
@@ -415,11 +451,26 @@ function PrepareQuickModal({ method, coffeeName, onStart, onClose }: {
 }) {
   const [water, setWater] = useState(method.type === "v60" ? 300 : 200);
   const [ratio, setRatio] = useState(15);
-  const coffee = method.type === "v60" ? (water / ratio).toFixed(1) : ((water / 200) * 11).toFixed(1);
+  const [v60Recipe, setV60Recipe] = useState<"46" | "standard">("46");
+
+  const coffee =
+    method.type === "aeropress"
+      ? ((water / 200) * 11).toFixed(1)
+      : v60Recipe === "standard"
+      ? (water / 16).toFixed(1)
+      : (water / ratio).toFixed(1);
 
   const handleStart = () => {
-    const steps = method.type === "v60" ? buildV60Steps(water, ratio) : buildAeropressSteps(water);
-    onStart(steps, `${METHOD_LABEL[method.type]} · ${coffeeName}`);
+    let steps: RecipeStep[];
+    let title: string;
+    if (method.type === "v60") {
+      steps = v60Recipe === "standard" ? buildV60StandardSteps(water) : buildV60Steps(water, ratio);
+      title = `${v60Recipe === "standard" ? "V60 Estàndard" : "V60 4:6"} · ${coffeeName}`;
+    } else {
+      steps = buildAeropressSteps(water);
+      title = `Aeropress · ${coffeeName}`;
+    }
+    onStart(steps, title);
   };
 
   return (
@@ -433,6 +484,16 @@ function PrepareQuickModal({ method, coffeeName, onStart, onClose }: {
           <button onClick={onClose}><X className="w-5 h-5 text-stone-400" /></button>
         </div>
         <div className="p-5 space-y-5">
+          {method.type === "v60" && (
+            <div className="flex rounded-xl border border-stone-200 overflow-hidden">
+              {(["46", "standard"] as const).map((r) => (
+                <button key={r} onClick={() => setV60Recipe(r)}
+                  className={`flex-1 py-2.5 text-xs font-bold transition-colors ${v60Recipe === r ? "bg-amber-50 text-amber-800 border-b-2 border-amber-700" : "text-stone-400 hover:text-stone-600 hover:bg-stone-50"}`}>
+                  {r === "46" ? "4:6 · Kasuya" : "Estàndard · 2 Aboc."}
+                </button>
+              ))}
+            </div>
+          )}
           <div>
             <div className="flex justify-between items-center mb-2">
               <label className="text-sm font-medium text-stone-600">Volum d'aigua</label>
@@ -444,7 +505,7 @@ function PrepareQuickModal({ method, coffeeName, onStart, onClose }: {
             </div>
             <input type="range" min={50} max={600} step={10} value={water} onChange={(e) => setWater(Number(e.target.value))} className="w-full" />
           </div>
-          {method.type === "v60" && (
+          {method.type === "v60" && v60Recipe === "46" && (
             <div>
               <div className="flex justify-between items-center mb-2">
                 <label className="text-sm font-medium text-stone-600">Ràtio</label>
@@ -452,6 +513,12 @@ function PrepareQuickModal({ method, coffeeName, onStart, onClose }: {
               </div>
               <input type="range" min={12} max={20} step={0.5} value={ratio} onChange={(e) => setRatio(Number(e.target.value))} className="w-full" />
               <div className="flex justify-between text-xs text-stone-400 mt-1"><span>1:12 (fort)</span><span>1:20 (suau)</span></div>
+            </div>
+          )}
+          {method.type === "v60" && v60Recipe === "standard" && (
+            <div className="flex items-center justify-between py-2 px-3 bg-stone-50 rounded-xl border border-stone-100">
+              <span className="text-sm text-stone-500">Ràtio fixe</span>
+              <span className="text-sm font-bold text-amber-700">1:16</span>
             </div>
           )}
           <div className="bg-amber-50 rounded-2xl p-4 flex justify-around border border-amber-100">
@@ -606,10 +673,44 @@ function CoffeeDetailPanel({ coffee, grinderCfg, onClose, onEditCoffee, onDelete
 
 function RecipeCalcSection({ onStartTimer }: { onStartTimer: (steps: RecipeStep[], title: string) => void }) {
   const [method, setMethod] = useState<"v60" | "aeropress">("v60");
+  const [v60Recipe, setV60Recipe] = useState<"46" | "standard">("46");
   const [water, setWater] = useState(300);
   const [ratio, setRatio] = useState(15);
-  const coffee = method === "v60" ? (water / ratio).toFixed(1) : ((water / 200) * 11).toFixed(1);
-  const steps = method === "v60" ? buildV60Steps(water, ratio) : buildAeropressSteps(water);
+
+  const coffee =
+    method === "aeropress"
+      ? ((water / 200) * 11).toFixed(1)
+      : v60Recipe === "standard"
+      ? (water / 16).toFixed(1)
+      : (water / ratio).toFixed(1);
+
+  const steps =
+    method === "aeropress"
+      ? buildAeropressSteps(water)
+      : v60Recipe === "standard"
+      ? buildV60StandardSteps(water)
+      : buildV60Steps(water, ratio);
+
+  const timerTitle =
+    method === "aeropress"
+      ? `Aeropress Hoffmann · ${water} g`
+      : v60Recipe === "standard"
+      ? `V60 Estàndard · ${water} ml`
+      : `V60 4:6 · ${water} ml`;
+
+  const recipeTitle =
+    method === "aeropress"
+      ? "Aeropress · Recepta Definitiva (James Hoffmann)"
+      : v60Recipe === "standard"
+      ? "V60 · Mètode Estàndard (2 Abocaments)"
+      : "V60 · Mètode 4:6 (Tetsu Kasuya)";
+
+  const recipeDescription =
+    method === "aeropress"
+      ? "Infusió total + pressió suau al final"
+      : v60Recipe === "standard"
+      ? "Pre-infusió + 2 abocaments principals · Ràtio fixe 1:16"
+      : "5 abocats iguals (20% cada un) cada 45 segons";
 
   return (
     <div className="space-y-4">
@@ -621,14 +722,29 @@ function RecipeCalcSection({ onStartTimer }: { onStartTimer: (steps: RecipeStep[
             <p className="text-xs text-stone-400">Proporcions i passos automàtics</p>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-2 mb-5">
+
+        {/* Method selector */}
+        <div className="grid grid-cols-2 gap-2 mb-4">
           {(["v60", "aeropress"] as const).map((m) => (
             <button key={m} onClick={() => setMethod(m)}
               className={`py-3.5 rounded-xl text-sm font-bold transition-all ${method === m ? "bg-amber-800 text-white shadow-sm" : "bg-stone-100 text-stone-500 hover:bg-stone-200"}`}>
-              {m === "v60" ? "☕ V60 Mètode 4:6" : "🔵 Aeropress Hoffmann"}
+              {m === "v60" ? "☕ V60" : "🔵 Aeropress Hoffmann"}
             </button>
           ))}
         </div>
+
+        {/* V60 recipe sub-selector */}
+        {method === "v60" && (
+          <div className="flex rounded-xl border border-stone-200 overflow-hidden mb-5">
+            {(["46", "standard"] as const).map((r) => (
+              <button key={r} onClick={() => setV60Recipe(r)}
+                className={`flex-1 py-2.5 text-xs font-bold transition-colors ${v60Recipe === r ? "bg-amber-50 text-amber-800 border-b-2 border-amber-700" : "text-stone-400 hover:text-stone-600 hover:bg-stone-50"}`}>
+                {r === "46" ? "Mètode 4:6 · Kasuya" : "Estàndard · 2 Abocaments"}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="space-y-5">
           <div>
             <div className="flex justify-between items-center mb-2">
@@ -642,7 +758,8 @@ function RecipeCalcSection({ onStartTimer }: { onStartTimer: (steps: RecipeStep[
             <input type="range" min={50} max={800} step={10} value={water} onChange={(e) => setWater(Number(e.target.value))} className="w-full" />
             <div className="flex justify-between text-xs text-stone-300 mt-1"><span>50 ml</span><span>800 ml</span></div>
           </div>
-          {method === "v60" && (
+
+          {method === "v60" && v60Recipe === "46" && (
             <div>
               <div className="flex justify-between items-center mb-2">
                 <label className="text-sm font-medium text-stone-700">Ràtio cafè / aigua</label>
@@ -652,7 +769,15 @@ function RecipeCalcSection({ onStartTimer }: { onStartTimer: (steps: RecipeStep[
               <div className="flex justify-between text-xs text-stone-300 mt-1"><span>1:12 (molt fort)</span><span>1:20 (suau)</span></div>
             </div>
           )}
+
+          {method === "v60" && v60Recipe === "standard" && (
+            <div className="flex items-center justify-between py-2.5 px-3 bg-stone-50 rounded-xl border border-stone-100">
+              <span className="text-sm text-stone-500">Ràtio fixe</span>
+              <span className="text-sm font-bold text-amber-700">1:16</span>
+            </div>
+          )}
         </div>
+
         <div className="mt-5 bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-5 border border-amber-100">
           <div className="flex justify-around items-center">
             <div className="text-center">
@@ -671,12 +796,8 @@ function RecipeCalcSection({ onStartTimer }: { onStartTimer: (steps: RecipeStep[
       </div>
 
       <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
-        <h3 className="font-bold text-stone-700 mb-1">
-          {method === "v60" ? "V60 · Mètode 4:6 (Tetsu Kasuya)" : "Aeropress · Recepta Definitiva (James Hoffmann)"}
-        </h3>
-        <p className="text-xs text-stone-400 mb-4">
-          {method === "v60" ? "5 abocats iguals (20% cada un) cada 45 segons" : "Infusió total + pressió suau al final"}
-        </p>
+        <h3 className="font-bold text-stone-700 mb-1">{recipeTitle}</h3>
+        <p className="text-xs text-stone-400 mb-4">{recipeDescription}</p>
         <div className="space-y-3">
           {steps.map((step, i) => (
             <div key={i} className="flex gap-3 items-start">
@@ -694,7 +815,7 @@ function RecipeCalcSection({ onStartTimer }: { onStartTimer: (steps: RecipeStep[
             </div>
           ))}
         </div>
-        <button onClick={() => onStartTimer(steps, method === "v60" ? `V60 4:6 · ${water} ml` : `Aeropress Hoffmann · ${water} g`)}
+        <button onClick={() => onStartTimer(steps, timerTitle)}
           className="mt-5 w-full flex items-center justify-center gap-3 bg-amber-800 text-white rounded-2xl py-4 font-bold text-base hover:bg-amber-900 transition-colors shadow-lg shadow-amber-800/20">
           <Clock className="w-5 h-5" /> Preparar amb temporitzador
         </button>
