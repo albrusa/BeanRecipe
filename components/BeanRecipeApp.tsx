@@ -39,7 +39,8 @@ interface CoffeeBean {
 interface GrinderConfig {
   calibrationOffset: number;
   currentClick: number;
-  clicksPerRotation: number;
+  marksOnDial: number;
+  clicksPerMark: number;
 }
 
 interface RecipeStep {
@@ -53,7 +54,8 @@ interface RecipeStep {
 // CONSTANTS
 // ─────────────────────────────────────────────
 
-const DEFAULT_CLICKS_PER_ROTATION = 30;
+const DEFAULT_MARKS_ON_DIAL = 10;
+const DEFAULT_CLICKS_PER_MARK = 3;
 
 const METHOD_LABEL: Record<BrewMethodType, string> = {
   v60: "V60", moka: "Moka", aeropress: "Aeropress",
@@ -76,15 +78,24 @@ const AEROPRESS_LABELS: Record<AeropressRecipe, string> = {
 // UTILS
 // ─────────────────────────────────────────────
 
-function calcGrindPosition(clicks: number, offset: number, cpr: number = DEFAULT_CLICKS_PER_ROTATION): string {
+function calcGrindPosition(
+  clicks: number,
+  offset: number,
+  marksOnDial: number = DEFAULT_MARKS_ON_DIAL,
+  clicksPerMark: number = DEFAULT_CLICKS_PER_MARK,
+): string {
+  const cpr = marksOnDial * clicksPerMark;
   const total = clicks + offset;
   if (total < 0) return `${clicks} clics (fora de rang)`;
   const rotations = Math.floor(total / cpr);
-  const rem = total % cpr;
+  const withinRot = total % cpr;
+  const markNum = Math.floor(withinRot / clicksPerMark);
+  const extraC = withinRot % clicksPerMark;
   const parts: string[] = [];
   if (rotations === 1) parts.push("1 volta");
   else if (rotations > 1) parts.push(`${rotations} voltes`);
-  parts.push(`Clic ${rem}`);
+  parts.push(`Nº ${markNum}`);
+  if (extraC > 0) parts.push(`+${extraC} clic${extraC > 1 ? "s" : ""}`);
   return parts.join(" · ");
 }
 
@@ -222,13 +233,14 @@ async function dbFetchCoffees(userId: string): Promise<CoffeeBean[]> {
 async function dbFetchGrinderConfig(userId: string): Promise<GrinderConfig | null> {
   const { data } = await supabase
     .from("grinder_config")
-    .select("calibration_offset, current_click, clicks_per_rotation")
+    .select("calibration_offset, current_click, marks_on_dial, clicks_per_mark")
     .eq("user_id", userId)
     .maybeSingle();
   return data ? {
     calibrationOffset: data.calibration_offset,
     currentClick: data.current_click ?? 0,
-    clicksPerRotation: data.clicks_per_rotation ?? DEFAULT_CLICKS_PER_ROTATION,
+    marksOnDial: data.marks_on_dial ?? DEFAULT_MARKS_ON_DIAL,
+    clicksPerMark: data.clicks_per_mark ?? DEFAULT_CLICKS_PER_MARK,
   } : null;
 }
 
@@ -274,7 +286,8 @@ async function dbSaveGrinderConfig(config: GrinderConfig, userId: string): Promi
     user_id: userId,
     calibration_offset: config.calibrationOffset,
     current_click: config.currentClick,
-    clicks_per_rotation: config.clicksPerRotation,
+    marks_on_dial: config.marksOnDial,
+    clicks_per_mark: config.clicksPerMark,
     updated_at: new Date().toISOString(),
   });
   if (error) throw error;
@@ -300,21 +313,22 @@ function polarToXY(cx: number, cy: number, angleDeg: number, r: number) {
 function GrinderDial({
   currentClick,
   calibrationOffset,
-  clicksPerRotation,
+  marksOnDial,
+  clicksPerMark,
   size = 200,
 }: {
   currentClick: number;
   calibrationOffset: number;
-  clicksPerRotation: number;
+  marksOnDial: number;
+  clicksPerMark: number;
   size?: number;
 }) {
-  const cpr = clicksPerRotation;
+  const cpr = marksOnDial * clicksPerMark;
   const cx = size / 2, cy = size / 2;
   const outerR   = size * 0.46;
   const innerR   = size * 0.30;
   const tickOutR = outerR - 2;
   const markerR  = tickOutR - size * 0.075;
-  const majorEvery = Math.max(1, Math.round(cpr / 10));
 
   const mechZeroPos   = calibrationOffset % cpr;
   const mechZeroAngle = clickToAngleDeg(mechZeroPos, cpr);
@@ -328,15 +342,18 @@ function GrinderDial({
   const isValid   = total >= 0;
   const rotations = isValid ? Math.floor(total / cpr) : 0;
   const withinRot = isValid ? total % cpr : 0;
+  const markNum   = isValid ? Math.floor(withinRot / clicksPerMark) : 0;
+  const extraC    = isValid ? withinRot % clicksPerMark : 0;
 
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: "block" }}>
       <circle cx={cx} cy={cy} r={outerR} fill="#f5f5f4" stroke="#d6d3d1" strokeWidth={1.5} />
       <circle cx={cx} cy={cy} r={innerR} fill="white" stroke="#e7e5e4" strokeWidth={1} />
 
+      {/* Tick marks: major every clicksPerMark, minor in between */}
       {Array.from({ length: cpr }, (_, i) => {
         const angle = (i / cpr) * 360 - 90;
-        const isMaj = i % majorEvery === 0;
+        const isMaj = i % clicksPerMark === 0;
         const len   = isMaj ? size * 0.065 : size * 0.03;
         const outer = polarToXY(cx, cy, angle, tickOutR);
         const inner = polarToXY(cx, cy, angle, tickOutR - len);
@@ -347,13 +364,14 @@ function GrinderDial({
         );
       })}
 
-      {Array.from({ length: 10 }, (_, i) => {
-        const angle = (i * majorEvery / cpr) * 360 - 90;
+      {/* Dial number labels: 0 to marksOnDial-1 */}
+      {Array.from({ length: marksOnDial }, (_, i) => {
+        const angle = (i * clicksPerMark / cpr) * 360 - 90;
         const pos   = polarToXY(cx, cy, angle, tickOutR - size * 0.1);
         return (
           <text key={i} x={pos.x} y={pos.y} textAnchor="middle" dominantBaseline="middle"
             fontSize={size * 0.057} fontWeight="600" fill="#57534e"
-            style={{ userSelect: "none" }}>{i * majorEvery}</text>
+            style={{ userSelect: "none" }}>{i}</text>
         );
       })}
 
@@ -373,13 +391,13 @@ function GrinderDial({
               {rotations} volta{rotations > 1 ? "es" : ""}
             </text>
           )}
-          <text x={cx} y={cy + (rotations > 0 ? size * 0.03 : 0)} textAnchor="middle"
-            dominantBaseline="middle" fontSize={size * 0.11} fontWeight="800" fill="#1c1917">
-            {withinRot}
+          <text x={cx} y={cy + (rotations > 0 ? size * 0.02 : -size * 0.02)} textAnchor="middle"
+            dominantBaseline="middle" fontSize={size * 0.14} fontWeight="800" fill="#1c1917">
+            {markNum}
           </text>
           <text x={cx} y={cy + size * 0.1} textAnchor="middle"
-            fontSize={size * 0.047} fill="#a8a29e">
-            / {cpr} clics
+            fontSize={size * 0.05} fill="#78716c">
+            {extraC > 0 ? `+${extraC} clic${extraC > 1 ? "s" : ""}` : "al nombre"}
           </text>
         </>
       ) : (
@@ -398,16 +416,18 @@ function GrindMovementDial({
   currentClicks,
   targetClicks,
   offset,
-  clicksPerRotation,
+  marksOnDial,
+  clicksPerMark,
   size = 168,
 }: {
   currentClicks: number;
   targetClicks: number;
   offset: number;
-  clicksPerRotation: number;
+  marksOnDial: number;
+  clicksPerMark: number;
   size?: number;
 }) {
-  const cpr      = clicksPerRotation;
+  const cpr      = marksOnDial * clicksPerMark;
   const diff     = targetClicks - currentClicks;
   const goRight  = diff < 0;
   const absDiff  = Math.abs(diff);
@@ -419,7 +439,6 @@ function GrindMovementDial({
   const innerR   = size * 0.28;
   const tickOutR = outerR - 2;
   const arcR     = size * 0.335;
-  const majorEvery = Math.max(1, Math.round(cpr / 10));
 
   const sweepClicks = remClicks === 0 ? cpr : remClicks;
   const sweepAngle  = Math.min((sweepClicks / cpr) * 360, 359.5);
@@ -480,7 +499,7 @@ function GrindMovementDial({
 
       {Array.from({ length: cpr }, (_, i) => {
         const angle = (i / cpr) * 360 - 90;
-        const isMaj = i % majorEvery === 0;
+        const isMaj = i % clicksPerMark === 0;
         const len   = isMaj ? size * 0.055 : size * 0.025;
         const outer = polarToXY(cx, cy, angle, tickOutR);
         const inner = polarToXY(cx, cy, angle, tickOutR - len);
@@ -491,13 +510,13 @@ function GrindMovementDial({
         );
       })}
 
-      {Array.from({ length: 10 }, (_, i) => {
-        const angle = (i * majorEvery / cpr) * 360 - 90;
+      {Array.from({ length: marksOnDial }, (_, i) => {
+        const angle = (i * clicksPerMark / cpr) * 360 - 90;
         const pos   = polarToXY(cx, cy, angle, tickOutR - size * 0.09);
         return (
           <text key={i} x={pos.x} y={pos.y} textAnchor="middle" dominantBaseline="middle"
             fontSize={size * 0.052} fontWeight="600" fill="#a8a29e"
-            style={{ userSelect: "none" }}>{i * majorEvery}</text>
+            style={{ userSelect: "none" }}>{i}</text>
         );
       })}
 
@@ -546,18 +565,20 @@ function GrindMovementInstruction({
   targetClicks,
   currentClicks,
   offset,
-  clicksPerRotation,
+  marksOnDial,
+  clicksPerMark,
   onApply,
 }: {
   targetClicks: number;
   currentClicks: number;
   offset: number;
-  clicksPerRotation: number;
+  marksOnDial: number;
+  clicksPerMark: number;
   onApply: () => void;
 }) {
   const diff = targetClicks - currentClicks;
   const absDiff = Math.abs(diff);
-  const targetPos = calcGrindPosition(targetClicks, offset, clicksPerRotation);
+  const targetPos = calcGrindPosition(targetClicks, offset, marksOnDial, clicksPerMark);
 
   if (diff === 0) {
     return (
@@ -585,7 +606,7 @@ function GrindMovementInstruction({
 
       {/* Animated movement dial */}
       <div className="flex justify-center mb-3">
-        <GrindMovementDial currentClicks={currentClicks} targetClicks={targetClicks} offset={offset} clicksPerRotation={clicksPerRotation} size={168} />
+        <GrindMovementDial currentClicks={currentClicks} targetClicks={targetClicks} offset={offset} marksOnDial={marksOnDial} clicksPerMark={clicksPerMark} size={168} />
       </div>
 
       {/* Direction row */}
@@ -622,18 +643,20 @@ function GrindMovementInstruction({
 
 function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: GrinderConfig) => void }) {
   const [editing, setEditing] = useState(false);
-  const [offsetVal, setOffsetVal] = useState(String(cfg.calibrationOffset));
-  const [cprVal, setCprVal] = useState(String(cfg.clicksPerRotation));
+  const [offsetVal, setOffsetVal]   = useState(String(cfg.calibrationOffset));
+  const [marksVal, setMarksVal]     = useState(String(cfg.marksOnDial));
+  const [cpmVal, setCpmVal]         = useState(String(cfg.clicksPerMark));
   const [editingCurrent, setEditingCurrent] = useState(false);
   const [currentVal, setCurrentVal] = useState(String(cfg.currentClick));
-  const cpr = cfg.clicksPerRotation;
-  const currentPos = calcGrindPosition(cfg.currentClick, cfg.calibrationOffset, cpr);
+  const cpr = cfg.marksOnDial * cfg.clicksPerMark;
+  const currentPos = calcGrindPosition(cfg.currentClick, cfg.calibrationOffset, cfg.marksOnDial, cfg.clicksPerMark);
 
   const save = () => {
     onSave({
       ...cfg,
       calibrationOffset: parseInt(offsetVal) || 0,
-      clicksPerRotation: Math.max(1, parseInt(cprVal) || DEFAULT_CLICKS_PER_ROTATION),
+      marksOnDial: Math.max(1, parseInt(marksVal) || DEFAULT_MARKS_ON_DIAL),
+      clicksPerMark: Math.max(1, parseInt(cpmVal) || DEFAULT_CLICKS_PER_MARK),
     });
     setEditing(false);
   };
@@ -666,7 +689,8 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
               <GrinderDial
                 currentClick={parseInt(currentVal) || 0}
                 calibrationOffset={cfg.calibrationOffset}
-                clicksPerRotation={cpr}
+                marksOnDial={cfg.marksOnDial}
+                clicksPerMark={cfg.clicksPerMark}
                 size={172}
               />
             </div>
@@ -697,7 +721,8 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
               <GrinderDial
                 currentClick={cfg.currentClick}
                 calibrationOffset={cfg.calibrationOffset}
-                clicksPerRotation={cpr}
+                marksOnDial={cfg.marksOnDial}
+                clicksPerMark={cfg.clicksPerMark}
                 size={192}
               />
             </div>
@@ -728,11 +753,11 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
               </div>
               <div>
                 <h2 className="font-bold text-white">Molinet</h2>
-                <p className="text-stone-400 text-xs">{cpr} clics/volta · calibració {cfg.calibrationOffset >= 0 ? "+" : ""}{cfg.calibrationOffset}</p>
+                <p className="text-stone-400 text-xs">{cfg.marksOnDial} marques · {cfg.clicksPerMark} clics/marca · {cpr}/volta</p>
               </div>
             </div>
             <button
-              onClick={() => { setEditing((v) => !v); setOffsetVal(String(cfg.calibrationOffset)); setCprVal(String(cfg.clicksPerRotation)); }}
+              onClick={() => { setEditing((v) => !v); setOffsetVal(String(cfg.calibrationOffset)); setMarksVal(String(cfg.marksOnDial)); setCpmVal(String(cfg.clicksPerMark)); }}
               className="text-xs text-amber-300 hover:text-amber-200 font-medium px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
             >
               {editing ? "Cancel·lar" : "Editar"}
@@ -743,24 +768,35 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
         <div className="p-5">
           {editing ? (
             <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-stone-700 block mb-1.5">
-                  Clics per volta
-                </label>
-                <input
-                  type="number" min={1} max={200}
-                  value={cprVal}
-                  onChange={(e) => setCprVal(e.target.value)}
-                  className="w-full border border-stone-300 rounded-xl px-4 py-3 text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm"
-                  placeholder="30"
-                />
-                <p className="text-xs text-stone-400 mt-1.5">
-                  Nombre de clics que fa el molinet per cada rotació completa.
-                </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium text-stone-700 block mb-1.5">Marques al dial</label>
+                  <input
+                    type="number" min={1} max={100}
+                    value={marksVal}
+                    onChange={(e) => setMarksVal(e.target.value)}
+                    className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm text-center font-bold"
+                    placeholder="10"
+                  />
+                  <p className="text-xs text-stone-400 mt-1 text-center">ex: 10 → 0…9</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-stone-700 block mb-1.5">Clics per marca</label>
+                  <input
+                    type="number" min={1} max={100}
+                    value={cpmVal}
+                    onChange={(e) => setCpmVal(e.target.value)}
+                    className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm text-center font-bold"
+                    placeholder="3"
+                  />
+                  <p className="text-xs text-stone-400 mt-1 text-center">
+                    total: {(Math.max(1, parseInt(marksVal) || 1) * Math.max(1, parseInt(cpmVal) || 1))} clics/volta
+                  </p>
+                </div>
               </div>
               <div>
                 <label className="text-sm font-medium text-stone-700 block mb-1.5">
-                  Calibració (zero mecànic, en clics)
+                  Zero mecànic (calibració, en clics)
                 </label>
                 <input
                   type="number"
@@ -770,7 +806,7 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
                   placeholder="0"
                 />
                 <p className="text-xs text-stone-400 mt-1.5">
-                  Clics del ring on les moles es toquen. Negatiu si hi ha joc mecànic.
+                  Posició del ring on les moles es toquen. Negatiu si hi ha joc mecànic.
                 </p>
               </div>
               <button onClick={save} className="w-full bg-stone-800 text-white rounded-xl py-3 text-sm font-semibold hover:bg-stone-900 transition-colors">
@@ -778,13 +814,19 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div className="bg-stone-50 rounded-xl p-3 text-center border border-stone-100">
-                <p className="text-[10px] uppercase tracking-widest text-stone-400 font-semibold mb-1">Clics / volta</p>
-                <p className="text-2xl font-extrabold text-stone-700">{cpr}</p>
+                <p className="text-[10px] uppercase tracking-widest text-stone-400 font-semibold mb-1">Marques</p>
+                <p className="text-2xl font-extrabold text-stone-700">{cfg.marksOnDial}</p>
+                <p className="text-xs text-stone-400">0–{cfg.marksOnDial - 1}</p>
+              </div>
+              <div className="bg-stone-50 rounded-xl p-3 text-center border border-stone-100">
+                <p className="text-[10px] uppercase tracking-widest text-stone-400 font-semibold mb-1">Clics/marca</p>
+                <p className="text-2xl font-extrabold text-stone-700">{cfg.clicksPerMark}</p>
+                <p className="text-xs text-stone-400">{cpr}/volta</p>
               </div>
               <div className="bg-amber-50 rounded-xl p-3 text-center border border-amber-100">
-                <p className="text-[10px] uppercase tracking-widest text-amber-500 font-semibold mb-1">Zero mecànic</p>
+                <p className="text-[10px] uppercase tracking-widest text-amber-500 font-semibold mb-1">Zero mec.</p>
                 <p className="text-2xl font-extrabold text-amber-900">
                   {cfg.calibrationOffset >= 0 ? "+" : ""}{cfg.calibrationOffset}
                 </p>
@@ -1144,7 +1186,7 @@ function CoffeeDetailPanel({ coffee, grinderCfg, onClose, onEditCoffee, onDelete
             ) : (
               <div className="space-y-3">
                 {coffee.methods.map((m) => {
-                  const pos = calcGrindPosition(m.grindClicks, grinderCfg.calibrationOffset, grinderCfg.clicksPerRotation);
+                  const pos = calcGrindPosition(m.grindClicks, grinderCfg.calibrationOffset, grinderCfg.marksOnDial, grinderCfg.clicksPerMark);
                   const canPrepare = m.type === "v60" || m.type === "aeropress";
                   return (
                     <div key={m.id} className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
@@ -1171,7 +1213,8 @@ function CoffeeDetailPanel({ coffee, grinderCfg, onClose, onEditCoffee, onDelete
                           targetClicks={m.grindClicks}
                           currentClicks={grinderCfg.currentClick}
                           offset={grinderCfg.calibrationOffset}
-                          clicksPerRotation={grinderCfg.clicksPerRotation}
+                          marksOnDial={grinderCfg.marksOnDial}
+                          clicksPerMark={grinderCfg.clicksPerMark}
                           onApply={() => onApplyGrind(m.grindClicks)}
                         />
                       </div>
@@ -1579,7 +1622,7 @@ export default function BeanRecipeApp() {
   // ── Data ──
   const [tab, setTab] = useState<"coffees" | "recipe" | "settings">("coffees");
   const [coffees, setCoffees] = useState<CoffeeBean[]>([]);
-  const [grinder, setGrinder] = useState<GrinderConfig>({ calibrationOffset: 0, currentClick: 0, clicksPerRotation: DEFAULT_CLICKS_PER_ROTATION });
+  const [grinder, setGrinder] = useState<GrinderConfig>({ calibrationOffset: 0, currentClick: 0, marksOnDial: DEFAULT_MARKS_ON_DIAL, clicksPerMark: DEFAULT_CLICKS_PER_MARK });
   const [dataLoading, setDataLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [coffeeModal, setCoffeeModal] = useState<{ open: boolean; editing?: CoffeeBean }>({ open: false });
@@ -1601,7 +1644,7 @@ export default function BeanRecipeApp() {
   useEffect(() => {
     if (!user) {
       setCoffees([]);
-      setGrinder({ calibrationOffset: 0, currentClick: 0, clicksPerRotation: DEFAULT_CLICKS_PER_ROTATION });
+      setGrinder({ calibrationOffset: 0, currentClick: 0, marksOnDial: DEFAULT_MARKS_ON_DIAL, clicksPerMark: DEFAULT_CLICKS_PER_MARK });
       return;
     }
     setDataLoading(true);
