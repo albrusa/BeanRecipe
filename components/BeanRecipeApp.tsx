@@ -313,11 +313,14 @@ function GrinderDial({
   const tickOutR = outerR - 2;
   const markerR  = tickOutR - size * 0.075;
 
-  const mechZeroClick = ((-calibrationOffset) % CLICKS_PER_ROTATION + CLICKS_PER_ROTATION) % CLICKS_PER_ROTATION;
-  const mechZeroAngle = clickToAngleDeg(mechZeroClick);
+  // Mechanical zero: physical ring position where burrs touch (= calibrationOffset on the ring)
+  const mechZeroPos   = calibrationOffset % CLICKS_PER_ROTATION;
+  const mechZeroAngle = clickToAngleDeg(mechZeroPos);
   const mechZeroPt    = polarToXY(cx, cy, mechZeroAngle, markerR);
 
-  const currentAngle = clickToAngleDeg(currentClick);
+  // Current position: physical ring reading = (clicks + offset) % 30
+  const physicalPos  = ((currentClick + calibrationOffset) % CLICKS_PER_ROTATION + CLICKS_PER_ROTATION) % CLICKS_PER_ROTATION;
+  const currentAngle = clickToAngleDeg(physicalPos);
   const currentPt    = polarToXY(cx, cy, currentAngle, markerR);
 
   const total     = currentClick + calibrationOffset;
@@ -389,10 +392,12 @@ function GrinderDial({
 function GrindMovementDial({
   currentClicks,
   targetClicks,
+  offset,
   size = 168,
 }: {
   currentClicks: number;
   targetClicks: number;
+  offset: number;
   size?: number;
 }) {
   const diff     = targetClicks - currentClicks;
@@ -428,8 +433,12 @@ function GrindMovementDial({
     return () => cancelAnimationFrame(rafRef.current);
   }, [currentClicks, targetClicks, arcLength]);
 
-  const currentAngle = clickToAngleDeg(currentClicks);
-  const targetAngle  = clickToAngleDeg(targetClicks);
+  // Use physical ring positions so dots match what the user sees on the grinder
+  const currentPhysical = ((currentClicks + offset) % CLICKS_PER_ROTATION + CLICKS_PER_ROTATION) % CLICKS_PER_ROTATION;
+  const targetPhysical  = ((targetClicks  + offset) % CLICKS_PER_ROTATION + CLICKS_PER_ROTATION) % CLICKS_PER_ROTATION;
+
+  const currentAngle = clickToAngleDeg(currentPhysical);
+  const targetAngle  = clickToAngleDeg(targetPhysical);
   const endAngle     = goRight ? currentAngle + sweepAngle : currentAngle - sweepAngle;
 
   const startPt     = polarToXY(cx, cy, currentAngle, arcR);
@@ -565,7 +574,7 @@ function GrindMovementInstruction({
 
       {/* Animated movement dial */}
       <div className="flex justify-center mb-3">
-        <GrindMovementDial currentClicks={currentClicks} targetClicks={targetClicks} size={168} />
+        <GrindMovementDial currentClicks={currentClicks} targetClicks={targetClicks} offset={offset} size={168} />
       </div>
 
       {/* Direction row */}
