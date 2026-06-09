@@ -16,6 +16,7 @@ import AuthForm from "./AuthForm";
 // ─────────────────────────────────────────────
 
 type BrewMethodType = "v60" | "moka" | "aeropress";
+type AeropressRecipe = "america" | "expres" | "latte" | "fred";
 
 interface BrewMethod {
   id: string;
@@ -62,6 +63,13 @@ const METHOD_BADGE: Record<BrewMethodType, string> = {
   v60: "bg-amber-100 text-amber-800 border border-amber-200",
   moka: "bg-red-100 text-red-800 border border-red-200",
   aeropress: "bg-sky-100 text-sky-800 border border-sky-200",
+};
+
+const AEROPRESS_LABELS: Record<AeropressRecipe, string> = {
+  america: "Cafè Americà",
+  expres:  "Estil Exprès",
+  latte:   "Cafè Latte",
+  fred:    "Cafè Fred ❄️",
 };
 
 // ─────────────────────────────────────────────
@@ -132,15 +140,54 @@ function buildV60StandardSteps(water: number): RecipeStep[] {
   ];
 }
 
-function buildAeropressSteps(water: number): RecipeStep[] {
-  const coffee = ((water / 200) * 11).toFixed(1);
+function buildAeropressAmericaSteps(): RecipeStep[] {
   return [
-    { time: 0,   instruction: `Posa ${coffee} g de cafè a l'Aeropress invertit. Vessa tots els ${water} g d'aigua a 100 °C ràpidament.`, amount: water, isAlert: true },
-    { time: 10,  instruction: "Agita vigorosament durant ~10 segons per saturar tot el cafè.", isAlert: false },
-    { time: 120, instruction: "Minut 2:00 — Agita suaument amb moviments circulars.", isAlert: true },
-    { time: 150, instruction: "Minut 2:30 — Col·loca el filtre i la tapa. Gira i comença a pressionar molt suaument.", isAlert: true },
-    { time: 180, instruction: "Minut 3:00 — Atura de pressionar. Cafè llest. Gaudeix-ne!", isAlert: true },
+    { time: 0,  instruction: "Afegeix 15g de cafè (molta mitjana-fina). Aboca aigua a 85°C fins a la marca (4). Agita suaument per nivelar.", isAlert: true },
+    { time: 10, instruction: "Remena durant 10 segons de forma suau però enèrgica.", isAlert: false },
+    { time: 20, instruction: "Insereix l'èmbol aprox. 1 cm. Deixa reposar el cafè durant 30 segons.", isAlert: true },
+    { time: 50, instruction: "Aplica una pressió suau i constant fins al final.", isAlert: true },
+    { time: 80, instruction: "Cafè Americà llest! Gaudeix-ne. ☕", isAlert: false },
   ];
+}
+
+function buildAeropressExpresSteps(doble: boolean): RecipeStep[] {
+  const grams = doble ? 30 : 15;
+  const mark = doble ? 2 : 1;
+  return [
+    { time: 0,  instruction: `Afegeix ${grams}g de cafè (molta mitjana-fina). Aboca aigua a 85°C fins a la marca (${mark}).`, isAlert: true },
+    { time: 10, instruction: "Remena suaument durant 10 segons.", isAlert: false },
+    { time: 20, instruction: "Insereix l'èmbol 1 cm i deixa reposar 30 segons.", isAlert: true },
+    { time: 50, instruction: "Premsa de forma suau i constant fins al final.", isAlert: true },
+    { time: 80, instruction: `Exprès ${doble ? "doble" : "individual"} llest! ☕`, isAlert: false },
+  ];
+}
+
+function buildAeropressLatteSteps(): RecipeStep[] {
+  return [
+    { time: 0,  instruction: "Afegeix 15g de cafè (molta mitjana-fina). Aboca aigua a 85°C fins a la marca (1).", isAlert: true },
+    { time: 10, instruction: "Remena durant 10 segons.", isAlert: false },
+    { time: 20, instruction: "Insereix l'èmbol 1 cm i deixa reposar 30 segons.", isAlert: true },
+    { time: 50, instruction: "Premsa suaument fins a escoltar el xiulet de l'aire.", isAlert: true },
+    { time: 80, instruction: "Retira la tapa del filtre per expulsar el pòls. Afegeix 240 ml de llet vaporitzada o escumada a la tassa. 🥛☕", isAlert: false },
+  ];
+}
+
+function buildAeropressFredSteps(): RecipeStep[] {
+  return [
+    { time: 0,  instruction: "Afegeix 15g de cafè (molta mitjana-fina). Aboca AIGUA A TEMPERATURA AMBIENT fins a la marca (4).", isAlert: true },
+    { time: 10, instruction: "Remena enèrgicament durant 1 minut sencer. No pares! ⏱", isAlert: false },
+    { time: 60, instruction: "Insereix l'èmbol i aplica una pressió suau i constant.", isAlert: true },
+    { time: 90, instruction: "Afegeix glaçons al gust i serveix directament. ❄️☕", isAlert: false },
+  ];
+}
+
+function buildAeropressStepsForRecipe(recipe: AeropressRecipe, doble: boolean): RecipeStep[] {
+  switch (recipe) {
+    case "america": return buildAeropressAmericaSteps();
+    case "expres":  return buildAeropressExpresSteps(doble);
+    case "latte":   return buildAeropressLatteSteps();
+    case "fred":    return buildAeropressFredSteps();
+  }
 }
 
 function fmtTime(s: number): string {
@@ -591,20 +638,29 @@ function MethodFormModal({ method, onSave, onClose }: { method?: BrewMethod; onS
 // PREPARE QUICK MODAL
 // ─────────────────────────────────────────────
 
+const AEROPRESS_COFFEE: Record<AeropressRecipe, number> = { america: 15, expres: 15, latte: 15, fred: 15 };
+const AEROPRESS_MARK: Record<AeropressRecipe, number | null> = { america: 4, expres: 1, latte: 1, fred: 4 };
+const AEROPRESS_TEMP: Record<AeropressRecipe, string> = { america: "85 °C", expres: "85 °C", latte: "85 °C", fred: "Temp. ambient" };
+
 function PrepareQuickModal({ method, coffeeName, onStart, onClose }: {
   method: BrewMethod; coffeeName: string;
   onStart: (steps: RecipeStep[], title: string) => void; onClose: () => void;
 }) {
-  const [water, setWater] = useState(method.type === "v60" ? 300 : 200);
+  const [water, setWater] = useState(300);
   const [ratio, setRatio] = useState(15);
   const [v60Recipe, setV60Recipe] = useState<"46" | "standard">("46");
+  const [aeropressRecipe, setAeropressRecipe] = useState<AeropressRecipe>("america");
+  const [aeropressDoble, setAeropressDoble] = useState(false);
 
-  const coffee =
-    method.type === "aeropress"
-      ? ((water / 200) * 11).toFixed(1)
-      : v60Recipe === "standard"
-      ? (water / 16).toFixed(1)
-      : (water / ratio).toFixed(1);
+  const isAeropress = method.type === "aeropress";
+
+  const coffeeg = isAeropress
+    ? (aeropressRecipe === "expres" && aeropressDoble ? 30 : AEROPRESS_COFFEE[aeropressRecipe])
+    : v60Recipe === "standard"
+    ? (water / 16).toFixed(1)
+    : (water / ratio).toFixed(1);
+
+  const aeropressMark = aeropressRecipe === "expres" && aeropressDoble ? 2 : AEROPRESS_MARK[aeropressRecipe];
 
   const handleStart = () => {
     let steps: RecipeStep[];
@@ -613,8 +669,8 @@ function PrepareQuickModal({ method, coffeeName, onStart, onClose }: {
       steps = v60Recipe === "standard" ? buildV60StandardSteps(water) : buildV60Steps(water, ratio);
       title = `${v60Recipe === "standard" ? "V60 Estàndard" : "V60 4:6"} · ${coffeeName}`;
     } else {
-      steps = buildAeropressSteps(water);
-      title = `Aeropress · ${coffeeName}`;
+      steps = buildAeropressStepsForRecipe(aeropressRecipe, aeropressDoble);
+      title = `Aeropress ${AEROPRESS_LABELS[aeropressRecipe]}${aeropressRecipe === "expres" && aeropressDoble ? " Doble" : ""} · ${coffeeName}`;
     }
     onStart(steps, title);
   };
@@ -640,17 +696,39 @@ function PrepareQuickModal({ method, coffeeName, onStart, onClose }: {
               ))}
             </div>
           )}
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium text-stone-600">Volum d'aigua</label>
-              <div className="flex items-center gap-1">
-                <input type="number" value={water} min={50} max={800} onChange={(e) => setWater(Number(e.target.value))}
-                  className="w-16 border border-stone-200 rounded-lg px-2 py-1 text-sm text-stone-800 text-right focus:outline-none focus:ring-2 focus:ring-amber-400" />
-                <span className="text-sm text-stone-400">ml</span>
-              </div>
+          {isAeropress && (
+            <div className="grid grid-cols-2 gap-1.5">
+              {(Object.keys(AEROPRESS_LABELS) as AeropressRecipe[]).map((r) => (
+                <button key={r} onClick={() => setAeropressRecipe(r)}
+                  className={`py-2 rounded-xl text-xs font-bold transition-all border ${aeropressRecipe === r ? "bg-sky-700 text-white border-sky-700" : "bg-stone-50 text-stone-500 border-stone-200 hover:border-stone-300"}`}>
+                  {AEROPRESS_LABELS[r]}
+                </button>
+              ))}
             </div>
-            <input type="range" min={50} max={600} step={10} value={water} onChange={(e) => setWater(Number(e.target.value))} className="w-full" />
-          </div>
+          )}
+          {isAeropress && aeropressRecipe === "expres" && (
+            <div className="flex rounded-xl border border-stone-200 overflow-hidden">
+              {([false, true] as const).map((d) => (
+                <button key={String(d)} onClick={() => setAeropressDoble(d)}
+                  className={`flex-1 py-2.5 text-xs font-bold transition-colors ${aeropressDoble === d ? "bg-sky-50 text-sky-800 border-b-2 border-sky-700" : "text-stone-400 hover:text-stone-600 hover:bg-stone-50"}`}>
+                  {d ? "Doble · 30g" : "Individual · 15g"}
+                </button>
+              ))}
+            </div>
+          )}
+          {!isAeropress && (
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <label className="text-sm font-medium text-stone-600">Volum d'aigua</label>
+                <div className="flex items-center gap-1">
+                  <input type="number" value={water} min={50} max={800} onChange={(e) => setWater(Number(e.target.value))}
+                    className="w-16 border border-stone-200 rounded-lg px-2 py-1 text-sm text-stone-800 text-right focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                  <span className="text-sm text-stone-400">ml</span>
+                </div>
+              </div>
+              <input type="range" min={50} max={600} step={10} value={water} onChange={(e) => setWater(Number(e.target.value))} className="w-full" />
+            </div>
+          )}
           {method.type === "v60" && v60Recipe === "46" && (
             <div>
               <div className="flex justify-between items-center mb-2">
@@ -667,19 +745,38 @@ function PrepareQuickModal({ method, coffeeName, onStart, onClose }: {
               <span className="text-sm font-bold text-amber-700">1:16</span>
             </div>
           )}
-          <div className="bg-amber-50 rounded-2xl p-4 flex justify-around border border-amber-100">
-            <div className="text-center">
-              <p className="text-xs text-amber-600/70 uppercase tracking-wide mb-1">Cafè</p>
-              <p className="text-3xl font-extrabold text-amber-900">{coffee}</p>
-              <p className="text-xs text-amber-700">grams</p>
+          {isAeropress ? (
+            <div className="bg-sky-50 rounded-2xl p-4 border border-sky-100 grid grid-cols-3 gap-2 text-center">
+              <div>
+                <p className="text-[10px] text-sky-500/70 uppercase tracking-wide mb-1">Cafè</p>
+                <p className="text-2xl font-extrabold text-sky-900">{coffeeg}</p>
+                <p className="text-xs text-sky-600">g</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-sky-500/70 uppercase tracking-wide mb-1">Marca</p>
+                <p className="text-2xl font-extrabold text-sky-900">{aeropressMark}</p>
+                <p className="text-xs text-sky-600">al tub</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-sky-500/70 uppercase tracking-wide mb-1">Temp.</p>
+                <p className="text-lg font-extrabold text-sky-900 leading-tight mt-1">{AEROPRESS_TEMP[aeropressRecipe]}</p>
+              </div>
             </div>
-            <div className="w-px bg-amber-200" />
-            <div className="text-center">
-              <p className="text-xs text-amber-600/70 uppercase tracking-wide mb-1">Aigua</p>
-              <p className="text-3xl font-extrabold text-amber-900">{water}</p>
-              <p className="text-xs text-amber-700">ml / g</p>
+          ) : (
+            <div className="bg-amber-50 rounded-2xl p-4 flex justify-around border border-amber-100">
+              <div className="text-center">
+                <p className="text-xs text-amber-600/70 uppercase tracking-wide mb-1">Cafè</p>
+                <p className="text-3xl font-extrabold text-amber-900">{coffeeg}</p>
+                <p className="text-xs text-amber-700">grams</p>
+              </div>
+              <div className="w-px bg-amber-200" />
+              <div className="text-center">
+                <p className="text-xs text-amber-600/70 uppercase tracking-wide mb-1">Aigua</p>
+                <p className="text-3xl font-extrabold text-amber-900">{water}</p>
+                <p className="text-xs text-amber-700">ml / g</p>
+              </div>
             </div>
-          </div>
+          )}
           <button onClick={handleStart}
             className="w-full flex items-center justify-center gap-2.5 bg-amber-800 text-white rounded-xl py-4 font-bold text-base hover:bg-amber-900 transition-colors shadow-md shadow-amber-800/20">
             <Play className="w-5 h-5" /> Iniciar temporitzador
@@ -832,41 +929,42 @@ function RecipeCalcSection({ onStartTimer }: { onStartTimer: (steps: RecipeStep[
   const [v60Recipe, setV60Recipe] = useState<"46" | "standard">("46");
   const [water, setWater] = useState(300);
   const [ratio, setRatio] = useState(15);
+  const [aeropressRecipe, setAeropressRecipe] = useState<AeropressRecipe>("america");
+  const [aeropressDoble, setAeropressDoble] = useState(false);
 
-  const coffee =
-    method === "aeropress"
-      ? ((water / 200) * 11).toFixed(1)
-      : v60Recipe === "standard"
-      ? (water / 16).toFixed(1)
-      : (water / ratio).toFixed(1);
+  const isAeropress = method === "aeropress";
 
-  const steps =
-    method === "aeropress"
-      ? buildAeropressSteps(water)
-      : v60Recipe === "standard"
-      ? buildV60StandardSteps(water)
-      : buildV60Steps(water, ratio);
+  const coffeeg = isAeropress
+    ? (aeropressRecipe === "expres" && aeropressDoble ? 30 : AEROPRESS_COFFEE[aeropressRecipe])
+    : v60Recipe === "standard"
+    ? (water / 16).toFixed(1)
+    : (water / ratio).toFixed(1);
 
-  const timerTitle =
-    method === "aeropress"
-      ? `Aeropress Hoffmann · ${water} g`
-      : v60Recipe === "standard"
-      ? `V60 Estàndard · ${water} ml`
-      : `V60 4:6 · ${water} ml`;
+  const aeropressMark = aeropressRecipe === "expres" && aeropressDoble ? 2 : AEROPRESS_MARK[aeropressRecipe];
 
-  const recipeTitle =
-    method === "aeropress"
-      ? "Aeropress · Recepta Definitiva (James Hoffmann)"
-      : v60Recipe === "standard"
-      ? "V60 · Mètode Estàndard (2 Abocaments)"
-      : "V60 · Mètode 4:6 (Tetsu Kasuya)";
+  const steps = isAeropress
+    ? buildAeropressStepsForRecipe(aeropressRecipe, aeropressDoble)
+    : v60Recipe === "standard"
+    ? buildV60StandardSteps(water)
+    : buildV60Steps(water, ratio);
 
-  const recipeDescription =
-    method === "aeropress"
-      ? "Infusió total + pressió suau al final"
-      : v60Recipe === "standard"
-      ? "Pre-infusió + 2 abocaments principals · Ràtio fixe 1:16"
-      : "5 abocats iguals (20% cada un) cada 45 segons";
+  const timerTitle = isAeropress
+    ? `Aeropress ${AEROPRESS_LABELS[aeropressRecipe]}${aeropressRecipe === "expres" && aeropressDoble ? " Doble" : ""}`
+    : v60Recipe === "standard"
+    ? `V60 Estàndard · ${water} ml`
+    : `V60 4:6 · ${water} ml`;
+
+  const recipeTitle = isAeropress
+    ? `Aeropress · ${AEROPRESS_LABELS[aeropressRecipe]}${aeropressRecipe === "expres" && aeropressDoble ? " Doble" : ""}`
+    : v60Recipe === "standard"
+    ? "V60 · Mètode Estàndard (2 Abocaments)"
+    : "V60 · Mètode 4:6 (Tetsu Kasuya)";
+
+  const recipeDescription = isAeropress
+    ? AEROPRESS_TEMP[aeropressRecipe] + (aeropressMark ? ` · Marca ${aeropressMark} al tub` : "")
+    : v60Recipe === "standard"
+    ? "Pre-infusió + 2 abocaments principals · Ràtio fixe 1:16"
+    : "5 abocats iguals (20% cada un) cada 45 segons";
 
   return (
     <div className="space-y-4">
@@ -884,12 +982,12 @@ function RecipeCalcSection({ onStartTimer }: { onStartTimer: (steps: RecipeStep[
           {(["v60", "aeropress"] as const).map((m) => (
             <button key={m} onClick={() => setMethod(m)}
               className={`py-3.5 rounded-xl text-sm font-bold transition-all ${method === m ? "bg-amber-800 text-white shadow-sm" : "bg-stone-100 text-stone-500 hover:bg-stone-200"}`}>
-              {m === "v60" ? "☕ V60" : "🔵 Aeropress Hoffmann"}
+              {m === "v60" ? "☕ V60" : "🔵 Aeropress"}
             </button>
           ))}
         </div>
 
-        {/* V60 recipe sub-selector */}
+        {/* V60 sub-selector */}
         {method === "v60" && (
           <div className="flex rounded-xl border border-stone-200 overflow-hidden mb-5">
             {(["46", "standard"] as const).map((r) => (
@@ -901,54 +999,99 @@ function RecipeCalcSection({ onStartTimer }: { onStartTimer: (steps: RecipeStep[
           </div>
         )}
 
-        <div className="space-y-5">
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium text-stone-700">Volum d'aigua</label>
-              <div className="flex items-center gap-1.5">
-                <input type="number" value={water} min={50} max={800} onChange={(e) => setWater(Number(e.target.value))}
-                  className="w-16 border border-stone-200 rounded-lg px-2 py-1 text-sm font-bold text-stone-800 text-right focus:outline-none focus:ring-2 focus:ring-amber-400" />
-                <span className="text-sm text-stone-400 font-medium">ml</span>
-              </div>
-            </div>
-            <input type="range" min={50} max={800} step={10} value={water} onChange={(e) => setWater(Number(e.target.value))} className="w-full" />
-            <div className="flex justify-between text-xs text-stone-300 mt-1"><span>50 ml</span><span>800 ml</span></div>
+        {/* Aeropress sub-selector */}
+        {isAeropress && (
+          <div className="grid grid-cols-2 gap-1.5 mb-4">
+            {(Object.keys(AEROPRESS_LABELS) as AeropressRecipe[]).map((r) => (
+              <button key={r} onClick={() => setAeropressRecipe(r)}
+                className={`py-2.5 rounded-xl text-xs font-bold transition-all border ${aeropressRecipe === r ? "bg-sky-700 text-white border-sky-700" : "bg-stone-50 text-stone-500 border-stone-200 hover:border-stone-300"}`}>
+                {AEROPRESS_LABELS[r]}
+              </button>
+            ))}
           </div>
+        )}
 
-          {method === "v60" && v60Recipe === "46" && (
+        {/* Exprès individual/doble toggle */}
+        {isAeropress && aeropressRecipe === "expres" && (
+          <div className="flex rounded-xl border border-stone-200 overflow-hidden mb-5">
+            {([false, true] as const).map((d) => (
+              <button key={String(d)} onClick={() => setAeropressDoble(d)}
+                className={`flex-1 py-2.5 text-xs font-bold transition-colors ${aeropressDoble === d ? "bg-sky-50 text-sky-800 border-b-2 border-sky-700" : "text-stone-400 hover:text-stone-600 hover:bg-stone-50"}`}>
+                {d ? "Doble · 30g" : "Individual · 15g"}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* V60: water & ratio controls */}
+        {!isAeropress && (
+          <div className="space-y-5 mb-5">
             <div>
               <div className="flex justify-between items-center mb-2">
-                <label className="text-sm font-medium text-stone-700">Ràtio cafè / aigua</label>
-                <span className="text-sm font-bold text-amber-700">1:{ratio}</span>
+                <label className="text-sm font-medium text-stone-700">Volum d'aigua</label>
+                <div className="flex items-center gap-1.5">
+                  <input type="number" value={water} min={50} max={800} onChange={(e) => setWater(Number(e.target.value))}
+                    className="w-16 border border-stone-200 rounded-lg px-2 py-1 text-sm font-bold text-stone-800 text-right focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                  <span className="text-sm text-stone-400 font-medium">ml</span>
+                </div>
               </div>
-              <input type="range" min={12} max={20} step={0.5} value={ratio} onChange={(e) => setRatio(Number(e.target.value))} className="w-full" />
-              <div className="flex justify-between text-xs text-stone-300 mt-1"><span>1:12 (molt fort)</span><span>1:20 (suau)</span></div>
+              <input type="range" min={50} max={800} step={10} value={water} onChange={(e) => setWater(Number(e.target.value))} className="w-full" />
+              <div className="flex justify-between text-xs text-stone-300 mt-1"><span>50 ml</span><span>800 ml</span></div>
             </div>
-          )}
+            {v60Recipe === "46" && (
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-sm font-medium text-stone-700">Ràtio cafè / aigua</label>
+                  <span className="text-sm font-bold text-amber-700">1:{ratio}</span>
+                </div>
+                <input type="range" min={12} max={20} step={0.5} value={ratio} onChange={(e) => setRatio(Number(e.target.value))} className="w-full" />
+                <div className="flex justify-between text-xs text-stone-300 mt-1"><span>1:12 (molt fort)</span><span>1:20 (suau)</span></div>
+              </div>
+            )}
+            {v60Recipe === "standard" && (
+              <div className="flex items-center justify-between py-2.5 px-3 bg-stone-50 rounded-xl border border-stone-100">
+                <span className="text-sm text-stone-500">Ràtio fixe</span>
+                <span className="text-sm font-bold text-amber-700">1:16</span>
+              </div>
+            )}
+          </div>
+        )}
 
-          {method === "v60" && v60Recipe === "standard" && (
-            <div className="flex items-center justify-between py-2.5 px-3 bg-stone-50 rounded-xl border border-stone-100">
-              <span className="text-sm text-stone-500">Ràtio fixe</span>
-              <span className="text-sm font-bold text-amber-700">1:16</span>
+        {/* Summary card */}
+        {isAeropress ? (
+          <div className="bg-gradient-to-r from-sky-50 to-blue-50 rounded-2xl p-5 border border-sky-100 grid grid-cols-3 gap-3 text-center">
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-sky-500 font-bold mb-1">Cafè mòlt</p>
+              <p className="text-4xl font-extrabold text-sky-900 tabular-nums">{coffeeg}</p>
+              <p className="text-sm text-sky-600 font-medium mt-0.5">grams</p>
             </div>
-          )}
-        </div>
-
-        <div className="mt-5 bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-5 border border-amber-100">
-          <div className="flex justify-around items-center">
-            <div className="text-center">
-              <p className="text-[10px] uppercase tracking-widest text-amber-500 font-bold mb-1">Cafè mòlt</p>
-              <p className="text-5xl font-extrabold text-amber-900 tabular-nums">{coffee}</p>
-              <p className="text-sm text-amber-600 font-medium mt-0.5">grams</p>
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-sky-500 font-bold mb-1">Marca tub</p>
+              <p className="text-4xl font-extrabold text-sky-900 tabular-nums">{aeropressMark}</p>
+              <p className="text-sm text-sky-600 font-medium mt-0.5">al tub</p>
             </div>
-            <div className="text-amber-200 text-3xl font-thin">·</div>
-            <div className="text-center">
-              <p className="text-[10px] uppercase tracking-widest text-amber-500 font-bold mb-1">Aigua</p>
-              <p className="text-5xl font-extrabold text-amber-900 tabular-nums">{water}</p>
-              <p className="text-sm text-amber-600 font-medium mt-0.5">ml / g</p>
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-sky-500 font-bold mb-1">Temperatura</p>
+              <p className="text-lg font-extrabold text-sky-900 leading-tight mt-2">{AEROPRESS_TEMP[aeropressRecipe]}</p>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="mt-5 bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-5 border border-amber-100">
+            <div className="flex justify-around items-center">
+              <div className="text-center">
+                <p className="text-[10px] uppercase tracking-widest text-amber-500 font-bold mb-1">Cafè mòlt</p>
+                <p className="text-5xl font-extrabold text-amber-900 tabular-nums">{coffeeg}</p>
+                <p className="text-sm text-amber-600 font-medium mt-0.5">grams</p>
+              </div>
+              <div className="text-amber-200 text-3xl font-thin">·</div>
+              <div className="text-center">
+                <p className="text-[10px] uppercase tracking-widest text-amber-500 font-bold mb-1">Aigua</p>
+                <p className="text-5xl font-extrabold text-amber-900 tabular-nums">{water}</p>
+                <p className="text-sm text-amber-600 font-medium mt-0.5">ml / g</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
