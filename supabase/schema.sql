@@ -8,8 +8,12 @@ create table public.grinder_config (
   id                 uuid primary key default gen_random_uuid(),
   user_id            uuid references auth.users(id) on delete cascade not null unique,
   calibration_offset integer not null default 0,
+  current_click      integer not null default 0,
   updated_at         timestamptz not null default now()
 );
+
+-- Si la taula ja existia, afegeix la nova columna (migració):
+-- alter table public.grinder_config add column if not exists current_click integer not null default 0;
 
 -- Taula: cafès
 create table public.coffees (

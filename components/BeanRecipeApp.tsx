@@ -6,6 +6,7 @@ import {
   Coffee, Settings, Scale, Play, Pause, RotateCcw, X,
   Plus, Edit2, Trash2, ChevronRight, CheckCircle,
   AlertCircle, Clock, Droplets, Flame, LogOut,
+  ArrowLeft, ArrowRight,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import AuthForm from "./AuthForm";
@@ -36,6 +37,7 @@ interface CoffeeBean {
 
 interface GrinderConfig {
   calibrationOffset: number;
+  currentClick: number;
 }
 
 interface RecipeStep {
@@ -176,10 +178,13 @@ async function dbFetchCoffees(userId: string): Promise<CoffeeBean[]> {
 async function dbFetchGrinderConfig(userId: string): Promise<GrinderConfig | null> {
   const { data } = await supabase
     .from("grinder_config")
-    .select("calibration_offset")
+    .select("calibration_offset, current_click")
     .eq("user_id", userId)
     .maybeSingle();
-  return data ? { calibrationOffset: data.calibration_offset } : null;
+  return data ? {
+    calibrationOffset: data.calibration_offset,
+    currentClick: data.current_click ?? 0,
+  } : null;
 }
 
 async function dbUpsertCoffee(coffee: CoffeeBean, userId: string): Promise<void> {
@@ -223,9 +228,87 @@ async function dbSaveGrinderConfig(config: GrinderConfig, userId: string): Promi
   const { error } = await supabase.from("grinder_config").upsert({
     user_id: userId,
     calibration_offset: config.calibrationOffset,
+    current_click: config.currentClick,
     updated_at: new Date().toISOString(),
   });
   if (error) throw error;
+}
+
+// ─────────────────────────────────────────────
+// GRIND MOVEMENT INSTRUCTION
+// ─────────────────────────────────────────────
+
+function GrindMovementInstruction({
+  targetClicks,
+  currentClicks,
+  offset,
+  onApply,
+}: {
+  targetClicks: number;
+  currentClicks: number;
+  offset: number;
+  onApply: () => void;
+}) {
+  const diff = targetClicks - currentClicks;
+  const absDiff = Math.abs(diff);
+  const targetPos = calcGrindPosition(targetClicks, offset);
+
+  if (diff === 0) {
+    return (
+      <div className="bg-green-50 border-2 border-green-200 rounded-2xl p-4 flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-green-500 flex items-center justify-center flex-shrink-0">
+          <CheckCircle className="w-6 h-6 text-white" />
+        </div>
+        <div>
+          <p className="font-extrabold text-green-800">Molinet a punt! ✨</p>
+          <p className="text-green-600 text-xs mt-0.5">{targetPos}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // diff < 0: target < current → finer grind → clockwise → RIGHT (DRETA)
+  // diff > 0: target > current → coarser grind → counterclockwise → LEFT (ESQUERRA)
+  const goRight = diff < 0;
+
+  return (
+    <div className={`rounded-2xl border-2 p-4 ${goRight ? "bg-sky-50 border-sky-300" : "bg-orange-50 border-orange-300"}`}>
+      <p className={`text-[10px] font-bold uppercase tracking-widest mb-3 ${goRight ? "text-sky-500" : "text-orange-500"}`}>
+        {goRight ? "Molenda més fina · Tanca el molinet" : "Molenda més gruixuda · Obre el molinet"}
+      </p>
+      <div className="flex items-center gap-3 mb-3">
+        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-md ${goRight ? "bg-sky-500 shadow-sky-200" : "bg-orange-500 shadow-orange-200"}`}>
+          {goRight
+            ? <ArrowRight className="w-9 h-9 text-white" strokeWidth={3} />
+            : <ArrowLeft  className="w-9 h-9 text-white" strokeWidth={3} />
+          }
+        </div>
+        <div className="flex items-end gap-1.5">
+          <p className={`text-6xl font-black tabular-nums leading-none ${goRight ? "text-sky-700" : "text-orange-700"}`}>
+            {absDiff}
+          </p>
+          <p className={`text-base font-bold mb-1 ${goRight ? "text-sky-600" : "text-orange-600"}`}>clics</p>
+        </div>
+        <div className={`flex-1 rounded-xl px-3 py-2.5 ${goRight ? "bg-sky-100" : "bg-orange-100"}`}>
+          <p className={`text-xl font-extrabold leading-tight ${goRight ? "text-sky-800" : "text-orange-800"}`}>
+            a la {goRight ? "DRETA" : "ESQUERRA"}
+          </p>
+          <p className={`text-xs mt-0.5 ${goRight ? "text-sky-600" : "text-orange-600"}`}>
+            sentit {goRight ? "horari ↻" : "antihorari ↺"}
+          </p>
+        </div>
+      </div>
+      <div className={`text-xs text-center py-1.5 rounded-lg mb-3 ${goRight ? "bg-sky-100 text-sky-600" : "bg-orange-100 text-orange-600"}`}>
+        Destí: <span className="font-bold">{targetPos}</span>
+      </div>
+      <button
+        onClick={onApply}
+        className={`w-full py-3 rounded-xl font-bold text-sm text-white transition-colors flex items-center justify-center gap-2 ${goRight ? "bg-sky-600 hover:bg-sky-700" : "bg-orange-600 hover:bg-orange-700"}`}
+      >
+        <CheckCircle className="w-4 h-4" /> Aplicar aquesta molta al molinet
+      </button>
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────
@@ -235,15 +318,78 @@ async function dbSaveGrinderConfig(config: GrinderConfig, userId: string): Promi
 function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: GrinderConfig) => void }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(String(cfg.calibrationOffset));
+  const [editingCurrent, setEditingCurrent] = useState(false);
+  const [currentVal, setCurrentVal] = useState(String(cfg.currentClick));
   const examplePos = calcGrindPosition(25, cfg.calibrationOffset);
+  const currentPos = calcGrindPosition(cfg.currentClick, cfg.calibrationOffset);
 
   const save = () => {
-    onSave({ calibrationOffset: parseInt(val) || 0 });
+    onSave({ ...cfg, calibrationOffset: parseInt(val) || 0 });
     setEditing(false);
+  };
+
+  const saveCurrent = () => {
+    onSave({ ...cfg, currentClick: parseInt(currentVal) || 0 });
+    setEditingCurrent(false);
   };
 
   return (
     <div className="space-y-4">
+      {/* Posició actual */}
+      <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 flex items-center justify-between border-b border-stone-100">
+          <div>
+            <h3 className="font-bold text-stone-700 text-sm">Posició actual del molinet</h3>
+            <p className="text-xs text-stone-400 mt-0.5">Última posició confirmada</p>
+          </div>
+          <button
+            onClick={() => { setEditingCurrent((e) => !e); setCurrentVal(String(cfg.currentClick)); }}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-600 transition-colors"
+          >
+            {editingCurrent ? "Cancel·lar" : "Actualitzar"}
+          </button>
+        </div>
+        {editingCurrent ? (
+          <div className="p-5 space-y-4">
+            <div>
+              <label className="text-sm font-medium text-stone-700 block mb-1.5">Clics totals actuals</label>
+              <div className="flex gap-3 items-center">
+                <input
+                  type="range" min={0} max={90}
+                  value={parseInt(currentVal) || 0}
+                  onChange={(e) => setCurrentVal(e.target.value)}
+                  className="flex-1"
+                />
+                <input
+                  type="number" min={0}
+                  value={currentVal}
+                  onChange={(e) => setCurrentVal(e.target.value)}
+                  className="w-16 border border-stone-200 rounded-xl px-3 py-2 text-stone-800 text-center focus:outline-none focus:ring-2 focus:ring-amber-400 text-sm font-bold"
+                />
+              </div>
+              <p className="text-xs text-amber-700 font-medium mt-2">
+                Equivalent a: {calcGrindPosition(parseInt(currentVal) || 0, cfg.calibrationOffset)}
+              </p>
+            </div>
+            <button onClick={saveCurrent} className="w-full bg-amber-800 text-white rounded-xl py-3 text-sm font-semibold hover:bg-amber-900 transition-colors">
+              Guardar posició actual
+            </button>
+          </div>
+        ) : (
+          <div className="p-5 flex items-center gap-4">
+            <div className="bg-amber-50 rounded-xl px-5 py-3 border border-amber-100 text-center flex-shrink-0">
+              <p className="text-[10px] uppercase tracking-widest text-amber-500 font-semibold mb-1">Clics</p>
+              <p className="text-4xl font-black text-amber-900 tabular-nums">{cfg.currentClick}</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-stone-400 font-semibold mb-1">Posició al dial</p>
+              <p className="font-bold text-amber-700 text-lg leading-tight">{currentPos}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Configuració del molinet */}
       <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
         <div className="bg-gradient-to-r from-stone-800 to-stone-700 px-5 py-4">
           <div className="flex items-center justify-between">
@@ -548,11 +694,13 @@ function PrepareQuickModal({ method, coffeeName, onStart, onClose }: {
 // COFFEE DETAIL PANEL
 // ─────────────────────────────────────────────
 
-function CoffeeDetailPanel({ coffee, grinderCfg, onClose, onEditCoffee, onDeleteCoffee, onAddMethod, onEditMethod, onDeleteMethod, onPrepare }: {
+function CoffeeDetailPanel({ coffee, grinderCfg, onClose, onEditCoffee, onDeleteCoffee, onAddMethod, onEditMethod, onDeleteMethod, onPrepare, onApplyGrind }: {
   coffee: CoffeeBean; grinderCfg: GrinderConfig; onClose: () => void;
   onEditCoffee: () => void; onDeleteCoffee: () => void;
   onAddMethod: (m: BrewMethod) => void; onEditMethod: (m: BrewMethod) => void;
-  onDeleteMethod: (id: string) => void; onPrepare: (steps: RecipeStep[], title: string) => void;
+  onDeleteMethod: (id: string) => void;
+  onPrepare: (steps: RecipeStep[], title: string, grindClicks?: number) => void;
+  onApplyGrind: (clicks: number) => void;
 }) {
   const [methodModal, setMethodModal] = useState<{ open: boolean; editing?: BrewMethod }>({ open: false });
   const [prepareModal, setPrepareModal] = useState<BrewMethod | null>(null);
@@ -621,7 +769,7 @@ function CoffeeDetailPanel({ coffee, grinderCfg, onClose, onEditCoffee, onDelete
                       </div>
                       <div className="px-4 py-3 space-y-2">
                         <div className="flex items-center justify-between text-sm">
-                          <span className="text-stone-400">Moltura</span>
+                          <span className="text-stone-400">Moltura objectiu</span>
                           <span className="font-bold text-stone-700">{m.grindClicks} clics</span>
                         </div>
                         <div className="flex items-center justify-between text-sm">
@@ -629,6 +777,14 @@ function CoffeeDetailPanel({ coffee, grinderCfg, onClose, onEditCoffee, onDelete
                           <span className="font-bold text-amber-700">{pos}</span>
                         </div>
                         {m.notes && <p className="text-xs text-stone-400 italic pt-1">{m.notes}</p>}
+                      </div>
+                      <div className="px-4 pb-3">
+                        <GrindMovementInstruction
+                          targetClicks={m.grindClicks}
+                          currentClicks={grinderCfg.currentClick}
+                          offset={grinderCfg.calibrationOffset}
+                          onApply={() => onApplyGrind(m.grindClicks)}
+                        />
                       </div>
                       {canPrepare && (
                         <div className="px-4 pb-3">
@@ -660,7 +816,7 @@ function CoffeeDetailPanel({ coffee, grinderCfg, onClose, onEditCoffee, onDelete
       )}
       {prepareModal && (
         <PrepareQuickModal method={prepareModal} coffeeName={coffee.name}
-          onStart={(steps, title) => { onPrepare(steps, title); setPrepareModal(null); }}
+          onStart={(steps, title) => { onPrepare(steps, title, prepareModal.grindClicks); setPrepareModal(null); }}
           onClose={() => setPrepareModal(null)} />
       )}
     </>
@@ -828,7 +984,11 @@ function RecipeCalcSection({ onStartTimer }: { onStartTimer: (steps: RecipeStep[
 // PREPARATION TIMER MODAL
 // ─────────────────────────────────────────────
 
-function PreparationTimerModal({ steps, title, onClose }: { steps: RecipeStep[]; title: string; onClose: () => void }) {
+function PreparationTimerModal({ steps, title, grindClicks, onApplyGrind, onClose }: {
+  steps: RecipeStep[]; title: string;
+  grindClicks?: number; onApplyGrind?: (clicks: number) => void;
+  onClose: () => void;
+}) {
   const [elapsed, setElapsed] = useState(0);
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
@@ -932,6 +1092,14 @@ function PreparationTimerModal({ steps, title, onClose }: { steps: RecipeStep[];
             <CheckCircle className="w-14 h-14 mx-auto mb-3" />
             <p className="text-2xl font-extrabold">Cafè llest!</p>
             <p className="text-green-200 text-sm mt-1.5">Que ho gaudeixis molt! ☕</p>
+            {grindClicks !== undefined && onApplyGrind && (
+              <button
+                onClick={() => onApplyGrind(grindClicks)}
+                className="mt-5 w-full bg-white/20 hover:bg-white/30 text-white font-bold rounded-xl py-3 text-sm transition-colors flex items-center justify-center gap-2"
+              >
+                <CheckCircle className="w-4 h-4" /> Aplicar aquesta molta al molinet
+              </button>
+            )}
           </div>
         )}
 
@@ -976,11 +1144,11 @@ export default function BeanRecipeApp() {
   // ── Data ──
   const [tab, setTab] = useState<"coffees" | "recipe" | "settings">("coffees");
   const [coffees, setCoffees] = useState<CoffeeBean[]>([]);
-  const [grinder, setGrinder] = useState<GrinderConfig>({ calibrationOffset: 0 });
+  const [grinder, setGrinder] = useState<GrinderConfig>({ calibrationOffset: 0, currentClick: 0 });
   const [dataLoading, setDataLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [coffeeModal, setCoffeeModal] = useState<{ open: boolean; editing?: CoffeeBean }>({ open: false });
-  const [timer, setTimer] = useState<{ steps: RecipeStep[]; title: string } | null>(null);
+  const [timer, setTimer] = useState<{ steps: RecipeStep[]; title: string; grindClicks?: number } | null>(null);
 
   // ── Auth listener ──
   useEffect(() => {
@@ -998,7 +1166,7 @@ export default function BeanRecipeApp() {
   useEffect(() => {
     if (!user) {
       setCoffees([]);
-      setGrinder({ calibrationOffset: 0 });
+      setGrinder({ calibrationOffset: 0, currentClick: 0 });
       return;
     }
     setDataLoading(true);
@@ -1042,6 +1210,12 @@ export default function BeanRecipeApp() {
   const handleSaveGrinder = async (cfg: GrinderConfig) => {
     setGrinder(cfg);
     await dbSaveGrinderConfig(cfg, user!.id).catch(console.error);
+  };
+
+  const handleApplyGrind = async (clicks: number) => {
+    const updated = { ...grinder, currentClick: clicks };
+    setGrinder(updated);
+    await dbSaveGrinderConfig(updated, user!.id).catch(console.error);
   };
 
   const handleLogout = () => supabase.auth.signOut();
@@ -1178,9 +1352,18 @@ export default function BeanRecipeApp() {
           onAddMethod={(m) => addMethod(selectedCoffee.id, m)}
           onEditMethod={(m) => editMethod(selectedCoffee.id, m)}
           onDeleteMethod={(id) => deleteMethod(selectedCoffee.id, id)}
-          onPrepare={(steps, title) => { setTimer({ steps, title }); setSelectedId(null); }} />
+          onPrepare={(steps, title, grindClicks) => { setTimer({ steps, title, grindClicks }); setSelectedId(null); }}
+          onApplyGrind={handleApplyGrind} />
       )}
-      {timer && <PreparationTimerModal steps={timer.steps} title={timer.title} onClose={() => setTimer(null)} />}
+      {timer && (
+        <PreparationTimerModal
+          steps={timer.steps}
+          title={timer.title}
+          grindClicks={timer.grindClicks}
+          onApplyGrind={handleApplyGrind}
+          onClose={() => setTimer(null)}
+        />
+      )}
     </div>
   );
 }
