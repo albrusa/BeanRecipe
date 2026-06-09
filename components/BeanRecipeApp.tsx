@@ -39,6 +39,7 @@ interface CoffeeBean {
 interface GrinderConfig {
   calibrationOffset: number;
   currentClick: number;
+  clicksPerRotation: number;
 }
 
 interface RecipeStep {
@@ -52,8 +53,7 @@ interface RecipeStep {
 // CONSTANTS
 // ─────────────────────────────────────────────
 
-const CLICKS_PER_ROTATION = 30;
-const CLICKS_PER_NUMBER = 3;
+const DEFAULT_CLICKS_PER_ROTATION = 30;
 
 const METHOD_LABEL: Record<BrewMethodType, string> = {
   v60: "V60", moka: "Moka", aeropress: "Aeropress",
@@ -76,18 +76,15 @@ const AEROPRESS_LABELS: Record<AeropressRecipe, string> = {
 // UTILS
 // ─────────────────────────────────────────────
 
-function calcGrindPosition(clicks: number, offset: number): string {
+function calcGrindPosition(clicks: number, offset: number, cpr: number = DEFAULT_CLICKS_PER_ROTATION): string {
   const total = clicks + offset;
   if (total < 0) return `${clicks} clics (fora de rang)`;
-  const rotations = Math.floor(total / CLICKS_PER_ROTATION);
-  const rem = total % CLICKS_PER_ROTATION;
-  const num = Math.floor(rem / CLICKS_PER_NUMBER);
-  const extra = rem % CLICKS_PER_NUMBER;
+  const rotations = Math.floor(total / cpr);
+  const rem = total % cpr;
   const parts: string[] = [];
   if (rotations === 1) parts.push("1 volta");
   else if (rotations > 1) parts.push(`${rotations} voltes`);
-  parts.push(`Nº ${num}`);
-  if (extra > 0) parts.push(`+${extra} clic${extra > 1 ? "s" : ""}`);
+  parts.push(`Clic ${rem}`);
   return parts.join(" · ");
 }
 
@@ -225,12 +222,13 @@ async function dbFetchCoffees(userId: string): Promise<CoffeeBean[]> {
 async function dbFetchGrinderConfig(userId: string): Promise<GrinderConfig | null> {
   const { data } = await supabase
     .from("grinder_config")
-    .select("calibration_offset, current_click")
+    .select("calibration_offset, current_click, clicks_per_rotation")
     .eq("user_id", userId)
     .maybeSingle();
   return data ? {
     calibrationOffset: data.calibration_offset,
     currentClick: data.current_click ?? 0,
+    clicksPerRotation: data.clicks_per_rotation ?? DEFAULT_CLICKS_PER_ROTATION,
   } : null;
 }
 
@@ -276,6 +274,7 @@ async function dbSaveGrinderConfig(config: GrinderConfig, userId: string): Promi
     user_id: userId,
     calibration_offset: config.calibrationOffset,
     current_click: config.currentClick,
+    clicks_per_rotation: config.clicksPerRotation,
     updated_at: new Date().toISOString(),
   });
   if (error) throw error;
@@ -285,8 +284,8 @@ async function dbSaveGrinderConfig(config: GrinderConfig, userId: string): Promi
 // DIAL HELPERS
 // ─────────────────────────────────────────────
 
-function clickToAngleDeg(click: number): number {
-  return ((click % CLICKS_PER_ROTATION) / CLICKS_PER_ROTATION) * 360 - 90;
+function clickToAngleDeg(click: number, cpr: number): number {
+  return ((click % cpr) / cpr) * 360 - 90;
 }
 
 function polarToXY(cx: number, cy: number, angleDeg: number, r: number) {
@@ -301,43 +300,43 @@ function polarToXY(cx: number, cy: number, angleDeg: number, r: number) {
 function GrinderDial({
   currentClick,
   calibrationOffset,
+  clicksPerRotation,
   size = 200,
 }: {
   currentClick: number;
   calibrationOffset: number;
+  clicksPerRotation: number;
   size?: number;
 }) {
+  const cpr = clicksPerRotation;
   const cx = size / 2, cy = size / 2;
   const outerR   = size * 0.46;
   const innerR   = size * 0.30;
   const tickOutR = outerR - 2;
   const markerR  = tickOutR - size * 0.075;
+  const majorEvery = Math.max(1, Math.round(cpr / 10));
 
-  // Mechanical zero: physical ring position where burrs touch (= calibrationOffset on the ring)
-  const mechZeroPos   = calibrationOffset % CLICKS_PER_ROTATION;
-  const mechZeroAngle = clickToAngleDeg(mechZeroPos);
+  const mechZeroPos   = calibrationOffset % cpr;
+  const mechZeroAngle = clickToAngleDeg(mechZeroPos, cpr);
   const mechZeroPt    = polarToXY(cx, cy, mechZeroAngle, markerR);
 
-  // Current position: physical ring reading = (clicks + offset) % 30
-  const physicalPos  = ((currentClick + calibrationOffset) % CLICKS_PER_ROTATION + CLICKS_PER_ROTATION) % CLICKS_PER_ROTATION;
-  const currentAngle = clickToAngleDeg(physicalPos);
+  const physicalPos  = ((currentClick + calibrationOffset) % cpr + cpr) % cpr;
+  const currentAngle = clickToAngleDeg(physicalPos, cpr);
   const currentPt    = polarToXY(cx, cy, currentAngle, markerR);
 
   const total     = currentClick + calibrationOffset;
   const isValid   = total >= 0;
-  const rotations = isValid ? Math.floor(total / CLICKS_PER_ROTATION) : 0;
-  const withinRot = isValid ? total % CLICKS_PER_ROTATION : 0;
-  const dialNum   = Math.floor(withinRot / CLICKS_PER_NUMBER);
-  const extraC    = withinRot % CLICKS_PER_NUMBER;
+  const rotations = isValid ? Math.floor(total / cpr) : 0;
+  const withinRot = isValid ? total % cpr : 0;
 
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: "block" }}>
       <circle cx={cx} cy={cy} r={outerR} fill="#f5f5f4" stroke="#d6d3d1" strokeWidth={1.5} />
       <circle cx={cx} cy={cy} r={innerR} fill="white" stroke="#e7e5e4" strokeWidth={1} />
 
-      {Array.from({ length: CLICKS_PER_ROTATION }, (_, i) => {
-        const angle = (i / CLICKS_PER_ROTATION) * 360 - 90;
-        const isMaj = i % CLICKS_PER_NUMBER === 0;
+      {Array.from({ length: cpr }, (_, i) => {
+        const angle = (i / cpr) * 360 - 90;
+        const isMaj = i % majorEvery === 0;
         const len   = isMaj ? size * 0.065 : size * 0.03;
         const outer = polarToXY(cx, cy, angle, tickOutR);
         const inner = polarToXY(cx, cy, angle, tickOutR - len);
@@ -349,12 +348,12 @@ function GrinderDial({
       })}
 
       {Array.from({ length: 10 }, (_, i) => {
-        const angle = (i * 3 / CLICKS_PER_ROTATION) * 360 - 90;
+        const angle = (i * majorEvery / cpr) * 360 - 90;
         const pos   = polarToXY(cx, cy, angle, tickOutR - size * 0.1);
         return (
           <text key={i} x={pos.x} y={pos.y} textAnchor="middle" dominantBaseline="middle"
-            fontSize={size * 0.06} fontWeight="600" fill="#57534e"
-            style={{ userSelect: "none" }}>{i}</text>
+            fontSize={size * 0.057} fontWeight="600" fill="#57534e"
+            style={{ userSelect: "none" }}>{i * majorEvery}</text>
         );
       })}
 
@@ -368,13 +367,19 @@ function GrinderDial({
 
       {isValid ? (
         <>
-          <text x={cx} y={cy - size * 0.055} textAnchor="middle"
-            fontSize={size * 0.1} fontWeight="800" fill="#1c1917">
-            {rotations > 0 ? `${rotations}·${dialNum}` : `${dialNum}`}
+          {rotations > 0 && (
+            <text x={cx} y={cy - size * 0.12} textAnchor="middle"
+              fontSize={size * 0.05} fontWeight="600" fill="#78716c">
+              {rotations} volta{rotations > 1 ? "es" : ""}
+            </text>
+          )}
+          <text x={cx} y={cy + (rotations > 0 ? size * 0.03 : 0)} textAnchor="middle"
+            dominantBaseline="middle" fontSize={size * 0.11} fontWeight="800" fill="#1c1917">
+            {withinRot}
           </text>
-          <text x={cx} y={cy + size * 0.075} textAnchor="middle"
-            fontSize={size * 0.052} fill="#78716c">
-            {extraC > 0 ? `+${extraC} clics` : "al nombre"}
+          <text x={cx} y={cy + size * 0.1} textAnchor="middle"
+            fontSize={size * 0.047} fill="#a8a29e">
+            / {cpr} clics
           </text>
         </>
       ) : (
@@ -393,27 +398,31 @@ function GrindMovementDial({
   currentClicks,
   targetClicks,
   offset,
+  clicksPerRotation,
   size = 168,
 }: {
   currentClicks: number;
   targetClicks: number;
   offset: number;
+  clicksPerRotation: number;
   size?: number;
 }) {
+  const cpr      = clicksPerRotation;
   const diff     = targetClicks - currentClicks;
   const goRight  = diff < 0;
   const absDiff  = Math.abs(diff);
-  const fullRevs = Math.floor(absDiff / CLICKS_PER_ROTATION);
-  const remClicks = absDiff % CLICKS_PER_ROTATION;
+  const fullRevs = Math.floor(absDiff / cpr);
+  const remClicks = absDiff % cpr;
 
   const cx = size / 2, cy = size / 2;
   const outerR   = size * 0.45;
   const innerR   = size * 0.28;
   const tickOutR = outerR - 2;
   const arcR     = size * 0.335;
+  const majorEvery = Math.max(1, Math.round(cpr / 10));
 
-  const sweepClicks = remClicks === 0 ? CLICKS_PER_ROTATION : remClicks;
-  const sweepAngle  = Math.min((sweepClicks / CLICKS_PER_ROTATION) * 360, 359.5);
+  const sweepClicks = remClicks === 0 ? cpr : remClicks;
+  const sweepAngle  = Math.min((sweepClicks / cpr) * 360, 359.5);
   const arcLength   = (sweepAngle / 360) * 2 * Math.PI * arcR;
 
   const rafRef = useRef<number>(0);
@@ -434,11 +443,11 @@ function GrindMovementDial({
   }, [currentClicks, targetClicks, arcLength]);
 
   // Use physical ring positions so dots match what the user sees on the grinder
-  const currentPhysical = ((currentClicks + offset) % CLICKS_PER_ROTATION + CLICKS_PER_ROTATION) % CLICKS_PER_ROTATION;
-  const targetPhysical  = ((targetClicks  + offset) % CLICKS_PER_ROTATION + CLICKS_PER_ROTATION) % CLICKS_PER_ROTATION;
+  const currentPhysical = ((currentClicks + offset) % cpr + cpr) % cpr;
+  const targetPhysical  = ((targetClicks  + offset) % cpr + cpr) % cpr;
 
-  const currentAngle = clickToAngleDeg(currentPhysical);
-  const targetAngle  = clickToAngleDeg(targetPhysical);
+  const currentAngle = clickToAngleDeg(currentPhysical, cpr);
+  const targetAngle  = clickToAngleDeg(targetPhysical, cpr);
   const endAngle     = goRight ? currentAngle + sweepAngle : currentAngle - sweepAngle;
 
   const startPt     = polarToXY(cx, cy, currentAngle, arcR);
@@ -469,9 +478,9 @@ function GrindMovementDial({
       <circle cx={cx} cy={cy} r={outerR} fill="#f5f5f4" stroke="#d6d3d1" strokeWidth={1.5} />
       <circle cx={cx} cy={cy} r={innerR} fill="white" stroke="#e7e5e4" strokeWidth={1} />
 
-      {Array.from({ length: CLICKS_PER_ROTATION }, (_, i) => {
-        const angle = (i / CLICKS_PER_ROTATION) * 360 - 90;
-        const isMaj = i % CLICKS_PER_NUMBER === 0;
+      {Array.from({ length: cpr }, (_, i) => {
+        const angle = (i / cpr) * 360 - 90;
+        const isMaj = i % majorEvery === 0;
         const len   = isMaj ? size * 0.055 : size * 0.025;
         const outer = polarToXY(cx, cy, angle, tickOutR);
         const inner = polarToXY(cx, cy, angle, tickOutR - len);
@@ -483,12 +492,12 @@ function GrindMovementDial({
       })}
 
       {Array.from({ length: 10 }, (_, i) => {
-        const angle = (i * 3 / CLICKS_PER_ROTATION) * 360 - 90;
+        const angle = (i * majorEvery / cpr) * 360 - 90;
         const pos   = polarToXY(cx, cy, angle, tickOutR - size * 0.09);
         return (
           <text key={i} x={pos.x} y={pos.y} textAnchor="middle" dominantBaseline="middle"
-            fontSize={size * 0.055} fontWeight="600" fill="#a8a29e"
-            style={{ userSelect: "none" }}>{i}</text>
+            fontSize={size * 0.052} fontWeight="600" fill="#a8a29e"
+            style={{ userSelect: "none" }}>{i * majorEvery}</text>
         );
       })}
 
@@ -537,16 +546,18 @@ function GrindMovementInstruction({
   targetClicks,
   currentClicks,
   offset,
+  clicksPerRotation,
   onApply,
 }: {
   targetClicks: number;
   currentClicks: number;
   offset: number;
+  clicksPerRotation: number;
   onApply: () => void;
 }) {
   const diff = targetClicks - currentClicks;
   const absDiff = Math.abs(diff);
-  const targetPos = calcGrindPosition(targetClicks, offset);
+  const targetPos = calcGrindPosition(targetClicks, offset, clicksPerRotation);
 
   if (diff === 0) {
     return (
@@ -574,7 +585,7 @@ function GrindMovementInstruction({
 
       {/* Animated movement dial */}
       <div className="flex justify-center mb-3">
-        <GrindMovementDial currentClicks={currentClicks} targetClicks={targetClicks} offset={offset} size={168} />
+        <GrindMovementDial currentClicks={currentClicks} targetClicks={targetClicks} offset={offset} clicksPerRotation={clicksPerRotation} size={168} />
       </div>
 
       {/* Direction row */}
@@ -611,14 +622,19 @@ function GrindMovementInstruction({
 
 function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: GrinderConfig) => void }) {
   const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(String(cfg.calibrationOffset));
+  const [offsetVal, setOffsetVal] = useState(String(cfg.calibrationOffset));
+  const [cprVal, setCprVal] = useState(String(cfg.clicksPerRotation));
   const [editingCurrent, setEditingCurrent] = useState(false);
   const [currentVal, setCurrentVal] = useState(String(cfg.currentClick));
-  const examplePos = calcGrindPosition(25, cfg.calibrationOffset);
-  const currentPos = calcGrindPosition(cfg.currentClick, cfg.calibrationOffset);
+  const cpr = cfg.clicksPerRotation;
+  const currentPos = calcGrindPosition(cfg.currentClick, cfg.calibrationOffset, cpr);
 
   const save = () => {
-    onSave({ ...cfg, calibrationOffset: parseInt(val) || 0 });
+    onSave({
+      ...cfg,
+      calibrationOffset: parseInt(offsetVal) || 0,
+      clicksPerRotation: Math.max(1, parseInt(cprVal) || DEFAULT_CLICKS_PER_ROTATION),
+    });
     setEditing(false);
   };
 
@@ -637,7 +653,7 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
             <p className="text-xs text-stone-400 mt-0.5">Última posició confirmada</p>
           </div>
           <button
-            onClick={() => { setEditingCurrent((e) => !e); setCurrentVal(String(cfg.currentClick)); }}
+            onClick={() => { setEditingCurrent((v) => !v); setCurrentVal(String(cfg.currentClick)); }}
             className="text-xs font-medium px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-600 transition-colors"
           >
             {editingCurrent ? "Cancel·lar" : "Actualitzar"}
@@ -650,6 +666,7 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
               <GrinderDial
                 currentClick={parseInt(currentVal) || 0}
                 calibrationOffset={cfg.calibrationOffset}
+                clicksPerRotation={cpr}
                 size={172}
               />
             </div>
@@ -680,6 +697,7 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
               <GrinderDial
                 currentClick={cfg.currentClick}
                 calibrationOffset={cfg.calibrationOffset}
+                clicksPerRotation={cpr}
                 size={192}
               />
             </div>
@@ -709,12 +727,12 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
                 <Settings className="w-5 h-5 text-amber-300" />
               </div>
               <div>
-                <h2 className="font-bold text-white">1Zpresso J</h2>
-                <p className="text-stone-400 text-xs">30 clics/volta · 3 clics/nº de dial</p>
+                <h2 className="font-bold text-white">Molinet</h2>
+                <p className="text-stone-400 text-xs">{cpr} clics/volta · calibració {cfg.calibrationOffset >= 0 ? "+" : ""}{cfg.calibrationOffset}</p>
               </div>
             </div>
             <button
-              onClick={() => { setEditing((e) => !e); setVal(String(cfg.calibrationOffset)); }}
+              onClick={() => { setEditing((v) => !v); setOffsetVal(String(cfg.calibrationOffset)); setCprVal(String(cfg.clicksPerRotation)); }}
               className="text-xs text-amber-300 hover:text-amber-200 font-medium px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
             >
               {editing ? "Cancel·lar" : "Editar"}
@@ -727,17 +745,32 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
             <div className="space-y-4">
               <div>
                 <label className="text-sm font-medium text-stone-700 block mb-1.5">
-                  Valor inicial de calibració (clics)
+                  Clics per volta
+                </label>
+                <input
+                  type="number" min={1} max={200}
+                  value={cprVal}
+                  onChange={(e) => setCprVal(e.target.value)}
+                  className="w-full border border-stone-300 rounded-xl px-4 py-3 text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm"
+                  placeholder="30"
+                />
+                <p className="text-xs text-stone-400 mt-1.5">
+                  Nombre de clics que fa el molinet per cada rotació completa.
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-stone-700 block mb-1.5">
+                  Calibració (zero mecànic, en clics)
                 </label>
                 <input
                   type="number"
-                  value={val}
-                  onChange={(e) => setVal(e.target.value)}
+                  value={offsetVal}
+                  onChange={(e) => setOffsetVal(e.target.value)}
                   className="w-full border border-stone-300 rounded-xl px-4 py-3 text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                   placeholder="0"
                 />
-                <p className="text-xs text-stone-400 mt-2 leading-relaxed">
-                  El punt zero real del teu molinet. Usa un nombre negatiu si hi ha joc físic abans del contacte.
+                <p className="text-xs text-stone-400 mt-1.5">
+                  Clics del ring on les moles es toquen. Negatiu si hi ha joc mecànic.
                 </p>
               </div>
               <button onClick={save} className="w-full bg-stone-800 text-white rounded-xl py-3 text-sm font-semibold hover:bg-stone-900 transition-colors">
@@ -745,22 +778,17 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-stone-50 rounded-xl p-3 text-center border border-stone-100">
+                <p className="text-[10px] uppercase tracking-widest text-stone-400 font-semibold mb-1">Clics / volta</p>
+                <p className="text-2xl font-extrabold text-stone-700">{cpr}</p>
+              </div>
               <div className="bg-amber-50 rounded-xl p-3 text-center border border-amber-100">
-                <p className="text-[10px] uppercase tracking-widest text-amber-500 font-semibold mb-1">Calibració</p>
+                <p className="text-[10px] uppercase tracking-widest text-amber-500 font-semibold mb-1">Zero mecànic</p>
                 <p className="text-2xl font-extrabold text-amber-900">
                   {cfg.calibrationOffset >= 0 ? "+" : ""}{cfg.calibrationOffset}
                 </p>
                 <p className="text-xs text-amber-600">clics</p>
-              </div>
-              <div className="bg-stone-50 rounded-xl p-3 text-center border border-stone-100">
-                <p className="text-[10px] uppercase tracking-widest text-stone-400 font-semibold mb-1">Resolució</p>
-                <p className="text-2xl font-extrabold text-stone-700">30</p>
-                <p className="text-xs text-stone-400">clics/volta</p>
-              </div>
-              <div className="bg-stone-50 rounded-xl p-3 text-center border border-stone-100">
-                <p className="text-[10px] uppercase tracking-widest text-stone-400 font-semibold mb-1">Ex. 25 clics</p>
-                <p className="text-[11px] font-bold text-amber-700 leading-tight mt-1">{examplePos}</p>
               </div>
             </div>
           )}
@@ -768,12 +796,11 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
       </div>
 
       <div className="bg-amber-50 rounded-2xl border border-amber-100 p-5">
-        <h3 className="font-semibold text-amber-900 text-sm mb-3">Com llegir la posició del dial</h3>
+        <h3 className="font-semibold text-amber-900 text-sm mb-3">Com llegir la posició</h3>
         <div className="space-y-2 text-sm text-amber-800">
           {[
-            ["Voltes completes", "El nombre de rotacions senceres del mecanisme."],
-            ["Número de dial (Nº)", "El número visible en el ring exterior (0–9)."],
-            ["+X clics", "Clics addicionals per sobre del número principal."],
+            ["Voltes completes", "Rotacions senceres des del zero mecànic."],
+            ["Clic X / Y", "Posició dins la volta actual (X de Y clics totals)."],
           ].map(([t, d]) => (
             <div key={t} className="flex gap-2">
               <span className="font-semibold flex-shrink-0">{t}:</span>
@@ -782,7 +809,7 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
           ))}
         </div>
         <div className="mt-3 bg-amber-100 rounded-xl p-3 text-xs text-amber-700 font-mono">
-          Exemple: 47 clics → 1 volta · Nº 5 · +2 clics
+          Ex: 47 clics (cpr=30, cal=8) → 1 volta · Clic 25
         </div>
       </div>
     </div>
@@ -1117,7 +1144,7 @@ function CoffeeDetailPanel({ coffee, grinderCfg, onClose, onEditCoffee, onDelete
             ) : (
               <div className="space-y-3">
                 {coffee.methods.map((m) => {
-                  const pos = calcGrindPosition(m.grindClicks, grinderCfg.calibrationOffset);
+                  const pos = calcGrindPosition(m.grindClicks, grinderCfg.calibrationOffset, grinderCfg.clicksPerRotation);
                   const canPrepare = m.type === "v60" || m.type === "aeropress";
                   return (
                     <div key={m.id} className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
@@ -1144,6 +1171,7 @@ function CoffeeDetailPanel({ coffee, grinderCfg, onClose, onEditCoffee, onDelete
                           targetClicks={m.grindClicks}
                           currentClicks={grinderCfg.currentClick}
                           offset={grinderCfg.calibrationOffset}
+                          clicksPerRotation={grinderCfg.clicksPerRotation}
                           onApply={() => onApplyGrind(m.grindClicks)}
                         />
                       </div>
@@ -1551,7 +1579,7 @@ export default function BeanRecipeApp() {
   // ── Data ──
   const [tab, setTab] = useState<"coffees" | "recipe" | "settings">("coffees");
   const [coffees, setCoffees] = useState<CoffeeBean[]>([]);
-  const [grinder, setGrinder] = useState<GrinderConfig>({ calibrationOffset: 0, currentClick: 0 });
+  const [grinder, setGrinder] = useState<GrinderConfig>({ calibrationOffset: 0, currentClick: 0, clicksPerRotation: DEFAULT_CLICKS_PER_ROTATION });
   const [dataLoading, setDataLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [coffeeModal, setCoffeeModal] = useState<{ open: boolean; editing?: CoffeeBean }>({ open: false });
@@ -1573,7 +1601,7 @@ export default function BeanRecipeApp() {
   useEffect(() => {
     if (!user) {
       setCoffees([]);
-      setGrinder({ calibrationOffset: 0, currentClick: 0 });
+      setGrinder({ calibrationOffset: 0, currentClick: 0, clicksPerRotation: DEFAULT_CLICKS_PER_ROTATION });
       return;
     }
     setDataLoading(true);

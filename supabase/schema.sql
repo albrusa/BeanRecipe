@@ -7,8 +7,9 @@
 create table public.grinder_config (
   id                 uuid primary key default gen_random_uuid(),
   user_id            uuid references auth.users(id) on delete cascade not null unique,
-  calibration_offset integer not null default 0,
-  current_click      integer not null default 0,
+  calibration_offset   integer not null default 0,
+  current_click        integer not null default 0,
+  clicks_per_rotation  integer not null default 30,
   updated_at         timestamptz not null default now()
 );
 
