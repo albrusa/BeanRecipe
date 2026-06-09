@@ -282,6 +282,245 @@ async function dbSaveGrinderConfig(config: GrinderConfig, userId: string): Promi
 }
 
 // ─────────────────────────────────────────────
+// DIAL HELPERS
+// ─────────────────────────────────────────────
+
+function clickToAngleDeg(click: number): number {
+  return ((click % CLICKS_PER_ROTATION) / CLICKS_PER_ROTATION) * 360 - 90;
+}
+
+function polarToXY(cx: number, cy: number, angleDeg: number, r: number) {
+  const rad = (angleDeg * Math.PI) / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+// ─────────────────────────────────────────────
+// GRINDER DIAL SVG
+// ─────────────────────────────────────────────
+
+function GrinderDial({
+  currentClick,
+  calibrationOffset,
+  size = 200,
+}: {
+  currentClick: number;
+  calibrationOffset: number;
+  size?: number;
+}) {
+  const cx = size / 2, cy = size / 2;
+  const outerR   = size * 0.46;
+  const innerR   = size * 0.30;
+  const tickOutR = outerR - 2;
+  const markerR  = tickOutR - size * 0.075;
+
+  const mechZeroClick = ((-calibrationOffset) % CLICKS_PER_ROTATION + CLICKS_PER_ROTATION) % CLICKS_PER_ROTATION;
+  const mechZeroAngle = clickToAngleDeg(mechZeroClick);
+  const mechZeroPt    = polarToXY(cx, cy, mechZeroAngle, markerR);
+
+  const currentAngle = clickToAngleDeg(currentClick);
+  const currentPt    = polarToXY(cx, cy, currentAngle, markerR);
+
+  const total     = currentClick + calibrationOffset;
+  const isValid   = total >= 0;
+  const rotations = isValid ? Math.floor(total / CLICKS_PER_ROTATION) : 0;
+  const withinRot = isValid ? total % CLICKS_PER_ROTATION : 0;
+  const dialNum   = Math.floor(withinRot / CLICKS_PER_NUMBER);
+  const extraC    = withinRot % CLICKS_PER_NUMBER;
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: "block" }}>
+      <circle cx={cx} cy={cy} r={outerR} fill="#f5f5f4" stroke="#d6d3d1" strokeWidth={1.5} />
+      <circle cx={cx} cy={cy} r={innerR} fill="white" stroke="#e7e5e4" strokeWidth={1} />
+
+      {Array.from({ length: CLICKS_PER_ROTATION }, (_, i) => {
+        const angle = (i / CLICKS_PER_ROTATION) * 360 - 90;
+        const isMaj = i % CLICKS_PER_NUMBER === 0;
+        const len   = isMaj ? size * 0.065 : size * 0.03;
+        const outer = polarToXY(cx, cy, angle, tickOutR);
+        const inner = polarToXY(cx, cy, angle, tickOutR - len);
+        return (
+          <line key={i} x1={outer.x} y1={outer.y} x2={inner.x} y2={inner.y}
+            stroke={isMaj ? "#78716c" : "#d6d3d1"}
+            strokeWidth={isMaj ? 1.5 : 1} strokeLinecap="round" />
+        );
+      })}
+
+      {Array.from({ length: 10 }, (_, i) => {
+        const angle = (i * 3 / CLICKS_PER_ROTATION) * 360 - 90;
+        const pos   = polarToXY(cx, cy, angle, tickOutR - size * 0.1);
+        return (
+          <text key={i} x={pos.x} y={pos.y} textAnchor="middle" dominantBaseline="middle"
+            fontSize={size * 0.06} fontWeight="600" fill="#57534e"
+            style={{ userSelect: "none" }}>{i}</text>
+        );
+      })}
+
+      {/* Mechanical zero (red) */}
+      <circle cx={mechZeroPt.x} cy={mechZeroPt.y} r={size * 0.028} fill="#ef4444" />
+      <circle cx={mechZeroPt.x} cy={mechZeroPt.y} r={size * 0.013} fill="white" />
+
+      {/* Current position (blue) */}
+      <circle cx={currentPt.x} cy={currentPt.y} r={size * 0.05} fill="#3b82f6" />
+      <circle cx={currentPt.x} cy={currentPt.y} r={size * 0.023} fill="white" />
+
+      {isValid ? (
+        <>
+          <text x={cx} y={cy - size * 0.055} textAnchor="middle"
+            fontSize={size * 0.1} fontWeight="800" fill="#1c1917">
+            {rotations > 0 ? `${rotations}·${dialNum}` : `${dialNum}`}
+          </text>
+          <text x={cx} y={cy + size * 0.075} textAnchor="middle"
+            fontSize={size * 0.052} fill="#78716c">
+            {extraC > 0 ? `+${extraC} clics` : "al nombre"}
+          </text>
+        </>
+      ) : (
+        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
+          fontSize={size * 0.06} fill="#ef4444">fora rang</text>
+      )}
+    </svg>
+  );
+}
+
+// ─────────────────────────────────────────────
+// GRIND MOVEMENT DIAL (animated)
+// ─────────────────────────────────────────────
+
+function GrindMovementDial({
+  currentClicks,
+  targetClicks,
+  size = 168,
+}: {
+  currentClicks: number;
+  targetClicks: number;
+  size?: number;
+}) {
+  const diff     = targetClicks - currentClicks;
+  const goRight  = diff < 0;
+  const absDiff  = Math.abs(diff);
+  const fullRevs = Math.floor(absDiff / CLICKS_PER_ROTATION);
+  const remClicks = absDiff % CLICKS_PER_ROTATION;
+
+  const cx = size / 2, cy = size / 2;
+  const outerR   = size * 0.45;
+  const innerR   = size * 0.28;
+  const tickOutR = outerR - 2;
+  const arcR     = size * 0.335;
+
+  const sweepClicks = remClicks === 0 ? CLICKS_PER_ROTATION : remClicks;
+  const sweepAngle  = Math.min((sweepClicks / CLICKS_PER_ROTATION) * 360, 359.5);
+  const arcLength   = (sweepAngle / 360) * 2 * Math.PI * arcR;
+
+  const rafRef = useRef<number>(0);
+  const [dashOffset, setDashOffset] = useState(arcLength);
+
+  useEffect(() => {
+    cancelAnimationFrame(rafRef.current);
+    setDashOffset(arcLength);
+    const t0 = performance.now();
+    const animate = (now: number) => {
+      const t = Math.min((now - t0) / 900, 1);
+      const e = 1 - Math.pow(1 - t, 3);
+      setDashOffset(arcLength * (1 - e));
+      if (t < 1) { rafRef.current = requestAnimationFrame(animate); }
+    };
+    rafRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [currentClicks, targetClicks, arcLength]);
+
+  const currentAngle = clickToAngleDeg(currentClicks);
+  const targetAngle  = clickToAngleDeg(targetClicks);
+  const endAngle     = goRight ? currentAngle + sweepAngle : currentAngle - sweepAngle;
+
+  const startPt     = polarToXY(cx, cy, currentAngle, arcR);
+  const endPt       = polarToXY(cx, cy, endAngle, arcR);
+  const targetDotPt = polarToXY(cx, cy, targetAngle, arcR);
+
+  const largeArc  = sweepAngle > 180 ? 1 : 0;
+  const sweepFlag = goRight ? 1 : 0;
+  const arcPath   = `M ${startPt.x} ${startPt.y} A ${arcR} ${arcR} 0 ${largeArc} ${sweepFlag} ${endPt.x} ${endPt.y}`;
+
+  const tangentAngle = goRight ? endAngle + 90 : endAngle - 90;
+  const arrowLen = size * 0.065;
+  const backAngle = tangentAngle + 180;
+  const arrowL = {
+    x: endPt.x + arrowLen * Math.cos(((backAngle + 28) * Math.PI) / 180),
+    y: endPt.y + arrowLen * Math.sin(((backAngle + 28) * Math.PI) / 180),
+  };
+  const arrowR2 = {
+    x: endPt.x + arrowLen * Math.cos(((backAngle - 28) * Math.PI) / 180),
+    y: endPt.y + arrowLen * Math.sin(((backAngle - 28) * Math.PI) / 180),
+  };
+  const arrowOpacity = arcLength > 0 ? Math.max(0, 1 - dashOffset / arcLength) : 1;
+
+  const color = goRight ? "#0ea5e9" : "#f97316";
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: "block" }}>
+      <circle cx={cx} cy={cy} r={outerR} fill="#f5f5f4" stroke="#d6d3d1" strokeWidth={1.5} />
+      <circle cx={cx} cy={cy} r={innerR} fill="white" stroke="#e7e5e4" strokeWidth={1} />
+
+      {Array.from({ length: CLICKS_PER_ROTATION }, (_, i) => {
+        const angle = (i / CLICKS_PER_ROTATION) * 360 - 90;
+        const isMaj = i % CLICKS_PER_NUMBER === 0;
+        const len   = isMaj ? size * 0.055 : size * 0.025;
+        const outer = polarToXY(cx, cy, angle, tickOutR);
+        const inner = polarToXY(cx, cy, angle, tickOutR - len);
+        return (
+          <line key={i} x1={outer.x} y1={outer.y} x2={inner.x} y2={inner.y}
+            stroke={isMaj ? "#a8a29e" : "#e2e0dd"}
+            strokeWidth={isMaj ? 1.5 : 1} strokeLinecap="round" />
+        );
+      })}
+
+      {Array.from({ length: 10 }, (_, i) => {
+        const angle = (i * 3 / CLICKS_PER_ROTATION) * 360 - 90;
+        const pos   = polarToXY(cx, cy, angle, tickOutR - size * 0.09);
+        return (
+          <text key={i} x={pos.x} y={pos.y} textAnchor="middle" dominantBaseline="middle"
+            fontSize={size * 0.055} fontWeight="600" fill="#a8a29e"
+            style={{ userSelect: "none" }}>{i}</text>
+        );
+      })}
+
+      {/* Ghost arc track */}
+      <path d={arcPath} fill="none" stroke={color} strokeWidth={size * 0.032}
+        strokeLinecap="round" opacity={0.12} />
+
+      {/* Animated arc */}
+      <path d={arcPath} fill="none" stroke={color}
+        strokeWidth={size * 0.038} strokeLinecap="round"
+        strokeDasharray={arcLength} strokeDashoffset={dashOffset} />
+
+      {/* Arrowhead at end (fades in) */}
+      <polygon
+        points={`${endPt.x},${endPt.y} ${arrowL.x},${arrowL.y} ${arrowR2.x},${arrowR2.y}`}
+        fill={color} opacity={arrowOpacity} />
+
+      {/* Start dot (current — blue) */}
+      <circle cx={startPt.x} cy={startPt.y} r={size * 0.052} fill="#3b82f6" />
+      <circle cx={startPt.x} cy={startPt.y} r={size * 0.024} fill="white" />
+
+      {/* End dot (target — arc color) */}
+      <circle cx={targetDotPt.x} cy={targetDotPt.y} r={size * 0.044} fill={color} opacity={0.3} />
+      <circle cx={targetDotPt.x} cy={targetDotPt.y} r={size * 0.027} fill={color} />
+
+      {/* Center: click count + revolutions */}
+      <text x={cx} y={cy - (fullRevs > 0 ? size * 0.06 : 0)} textAnchor="middle"
+        dominantBaseline="middle" fontSize={size * 0.11} fontWeight="800" fill={color}>
+        {absDiff}
+      </text>
+      {fullRevs > 0 && (
+        <text x={cx} y={cy + size * 0.1} textAnchor="middle"
+          fontSize={size * 0.049} fill="#78716c">
+          {fullRevs} volta{fullRevs > 1 ? "es" : ""}
+        </text>
+      )}
+    </svg>
+  );
+}
+
+// ─────────────────────────────────────────────
 // GRIND MOVEMENT INSTRUCTION
 // ─────────────────────────────────────────────
 
@@ -314,45 +553,44 @@ function GrindMovementInstruction({
     );
   }
 
-  // diff < 0: target < current → finer grind → clockwise → RIGHT (DRETA)
-  // diff > 0: target > current → coarser grind → counterclockwise → LEFT (ESQUERRA)
+  // diff < 0 → finer → clockwise → DRETA
+  // diff > 0 → coarser → counterclockwise → ESQUERRA
   const goRight = diff < 0;
 
   return (
-    <div className={`rounded-2xl border-2 p-4 ${goRight ? "bg-sky-50 border-sky-300" : "bg-orange-50 border-orange-300"}`}>
-      <p className={`text-[10px] font-bold uppercase tracking-widest mb-3 ${goRight ? "text-sky-500" : "text-orange-500"}`}>
-        {goRight ? "Molenda més fina · Tanca el molinet" : "Molenda més gruixuda · Obre el molinet"}
+    <div className={`rounded-2xl border-2 p-4 ${goRight ? "bg-sky-50 border-sky-200" : "bg-orange-50 border-orange-200"}`}>
+      <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${goRight ? "text-sky-500" : "text-orange-500"}`}>
+        {goRight ? "Molenda més fina · Tanca el molinet ↻" : "Molenda més gruixuda · Obre el molinet ↺"}
       </p>
-      <div className="flex items-center gap-3 mb-3">
-        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-md ${goRight ? "bg-sky-500 shadow-sky-200" : "bg-orange-500 shadow-orange-200"}`}>
+
+      {/* Animated movement dial */}
+      <div className="flex justify-center mb-3">
+        <GrindMovementDial currentClicks={currentClicks} targetClicks={targetClicks} size={168} />
+      </div>
+
+      {/* Direction row */}
+      <div className={`flex items-center gap-3 rounded-xl px-3 py-2.5 mb-3 ${goRight ? "bg-sky-100" : "bg-orange-100"}`}>
+        <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${goRight ? "bg-sky-500" : "bg-orange-500"}`}>
           {goRight
-            ? <ArrowRight className="w-9 h-9 text-white" strokeWidth={3} />
-            : <ArrowLeft  className="w-9 h-9 text-white" strokeWidth={3} />
+            ? <ArrowRight className="w-5 h-5 text-white" strokeWidth={2.5} />
+            : <ArrowLeft  className="w-5 h-5 text-white" strokeWidth={2.5} />
           }
         </div>
-        <div className="flex items-end gap-1.5">
-          <p className={`text-6xl font-black tabular-nums leading-none ${goRight ? "text-sky-700" : "text-orange-700"}`}>
-            {absDiff}
-          </p>
-          <p className={`text-base font-bold mb-1 ${goRight ? "text-sky-600" : "text-orange-600"}`}>clics</p>
-        </div>
-        <div className={`flex-1 rounded-xl px-3 py-2.5 ${goRight ? "bg-sky-100" : "bg-orange-100"}`}>
-          <p className={`text-xl font-extrabold leading-tight ${goRight ? "text-sky-800" : "text-orange-800"}`}>
-            a la {goRight ? "DRETA" : "ESQUERRA"}
+        <div className="flex-1">
+          <p className={`font-extrabold text-sm leading-tight ${goRight ? "text-sky-800" : "text-orange-800"}`}>
+            {absDiff} clics a la {goRight ? "DRETA" : "ESQUERRA"}
           </p>
           <p className={`text-xs mt-0.5 ${goRight ? "text-sky-600" : "text-orange-600"}`}>
-            sentit {goRight ? "horari ↻" : "antihorari ↺"}
+            Destí: <span className="font-semibold">{targetPos}</span>
           </p>
         </div>
       </div>
-      <div className={`text-xs text-center py-1.5 rounded-lg mb-3 ${goRight ? "bg-sky-100 text-sky-600" : "bg-orange-100 text-orange-600"}`}>
-        Destí: <span className="font-bold">{targetPos}</span>
-      </div>
+
       <button
         onClick={onApply}
         className={`w-full py-3 rounded-xl font-bold text-sm text-white transition-colors flex items-center justify-center gap-2 ${goRight ? "bg-sky-600 hover:bg-sky-700" : "bg-orange-600 hover:bg-orange-700"}`}
       >
-        <CheckCircle className="w-4 h-4" /> Aplicar aquesta molta al molinet
+        <CheckCircle className="w-4 h-4" /> Aplicar aquesta molta
       </button>
     </div>
   );
@@ -398,6 +636,14 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
         </div>
         {editingCurrent ? (
           <div className="p-5 space-y-4">
+            {/* Live-preview dial while editing */}
+            <div className="flex justify-center">
+              <GrinderDial
+                currentClick={parseInt(currentVal) || 0}
+                calibrationOffset={cfg.calibrationOffset}
+                size={172}
+              />
+            </div>
             <div>
               <label className="text-sm font-medium text-stone-700 block mb-1.5">Clics totals actuals</label>
               <div className="flex gap-3 items-center">
@@ -414,24 +660,33 @@ function GrinderSection({ cfg, onSave }: { cfg: GrinderConfig; onSave: (c: Grind
                   className="w-16 border border-stone-200 rounded-xl px-3 py-2 text-stone-800 text-center focus:outline-none focus:ring-2 focus:ring-amber-400 text-sm font-bold"
                 />
               </div>
-              <p className="text-xs text-amber-700 font-medium mt-2">
-                Equivalent a: {calcGrindPosition(parseInt(currentVal) || 0, cfg.calibrationOffset)}
-              </p>
             </div>
             <button onClick={saveCurrent} className="w-full bg-amber-800 text-white rounded-xl py-3 text-sm font-semibold hover:bg-amber-900 transition-colors">
               Guardar posició actual
             </button>
           </div>
         ) : (
-          <div className="p-5 flex items-center gap-4">
-            <div className="bg-amber-50 rounded-xl px-5 py-3 border border-amber-100 text-center flex-shrink-0">
-              <p className="text-[10px] uppercase tracking-widest text-amber-500 font-semibold mb-1">Clics</p>
-              <p className="text-4xl font-black text-amber-900 tabular-nums">{cfg.currentClick}</p>
+          <div className="p-5 space-y-3">
+            <div className="flex justify-center">
+              <GrinderDial
+                currentClick={cfg.currentClick}
+                calibrationOffset={cfg.calibrationOffset}
+                size={192}
+              />
             </div>
-            <div>
-              <p className="text-[10px] uppercase tracking-widest text-stone-400 font-semibold mb-1">Posició al dial</p>
-              <p className="font-bold text-amber-700 text-lg leading-tight">{currentPos}</p>
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-2 text-xs text-stone-500">
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-500 flex-shrink-0" />
+                <span>Posició actual</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-stone-500">
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0" />
+                <span>Zero mecànic</span>
+              </div>
             </div>
+            <p className="text-center text-sm font-bold text-amber-700 bg-amber-50 rounded-xl py-2 border border-amber-100">
+              {currentPos}
+            </p>
           </div>
         )}
       </div>
