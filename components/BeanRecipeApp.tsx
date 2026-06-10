@@ -282,14 +282,17 @@ async function dbDeleteMethod(id: string): Promise<void> {
 }
 
 async function dbSaveGrinderConfig(config: GrinderConfig, userId: string): Promise<void> {
-  const { error } = await supabase.from("grinder_config").upsert({
-    user_id: userId,
-    calibration_offset: config.calibrationOffset,
-    current_click: config.currentClick,
-    marks_on_dial: config.marksOnDial,
-    clicks_per_mark: config.clicksPerMark,
-    updated_at: new Date().toISOString(),
-  });
+  const { error } = await supabase.from("grinder_config").upsert(
+    {
+      user_id: userId,
+      calibration_offset: config.calibrationOffset,
+      current_click: config.currentClick,
+      marks_on_dial: config.marksOnDial,
+      clicks_per_mark: config.clicksPerMark,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
   if (error) throw error;
 }
 
