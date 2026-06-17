@@ -482,7 +482,7 @@ function GrindMovementDial({
   const arcPath   = `M ${startPt.x} ${startPt.y} A ${arcR} ${arcR} 0 ${largeArc} ${sweepFlag} ${endPt.x} ${endPt.y}`;
 
   const tangentAngle = goRight ? endAngle - 90 : endAngle + 90;
-  const arrowLen = size * 0.065;
+  const arrowLen = size * 0.048;
   const backAngle = tangentAngle + 180;
   // Tip lands on the edge of the orange circle, not its centre
   const orangeDotR = size * 0.052;
@@ -531,12 +531,12 @@ function GrindMovementDial({
       })}
 
       {/* Ghost arc track */}
-      <path d={arcPath} fill="none" stroke={color} strokeWidth={size * 0.032}
-        strokeLinecap="round" opacity={0.12} />
+      <path d={arcPath} fill="none" stroke={color} strokeWidth={1.5}
+        strokeLinecap="round" opacity={0.15} />
 
       {/* Animated arc */}
       <path d={arcPath} fill="none" stroke={color}
-        strokeWidth={size * 0.038} strokeLinecap="round"
+        strokeWidth={1.5} strokeLinecap="round"
         strokeDasharray={arcLength} strokeDashoffset={dashOffset} />
 
       {/* Start dot (current — blue) */}
