@@ -1476,6 +1476,20 @@ function PreparationTimerModal({ steps, title, grindClicks, onApplyGrind, onClos
   const prevStepIdx = useRef(-1);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+
+  useEffect(() => {
+    if (!("wakeLock" in navigator)) return;
+    const acquire = () =>
+      navigator.wakeLock.request("screen").then((lock) => { wakeLockRef.current = lock; }).catch(() => {});
+    acquire();
+    const onVisible = () => { if (document.visibilityState === "visible") acquire(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      wakeLockRef.current?.release();
+    };
+  }, []);
 
   const stepIdx = steps.reduce((a, s, i) => (elapsed >= s.time ? i : a), 0);
   const curStep = steps[stepIdx];
