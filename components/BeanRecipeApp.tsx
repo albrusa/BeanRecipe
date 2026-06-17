@@ -484,13 +484,19 @@ function GrindMovementDial({
   const tangentAngle = goRight ? endAngle - 90 : endAngle + 90;
   const arrowLen = size * 0.065;
   const backAngle = tangentAngle + 180;
+  // Tip lands on the edge of the orange circle, not its centre
+  const orangeDotR = size * 0.052;
+  const tipPt = {
+    x: endPt.x + orangeDotR * Math.cos((backAngle * Math.PI) / 180),
+    y: endPt.y + orangeDotR * Math.sin((backAngle * Math.PI) / 180),
+  };
   const arrowL = {
-    x: endPt.x + arrowLen * Math.cos(((backAngle + 28) * Math.PI) / 180),
-    y: endPt.y + arrowLen * Math.sin(((backAngle + 28) * Math.PI) / 180),
+    x: tipPt.x + arrowLen * Math.cos(((backAngle + 28) * Math.PI) / 180),
+    y: tipPt.y + arrowLen * Math.sin(((backAngle + 28) * Math.PI) / 180),
   };
   const arrowR2 = {
-    x: endPt.x + arrowLen * Math.cos(((backAngle - 28) * Math.PI) / 180),
-    y: endPt.y + arrowLen * Math.sin(((backAngle - 28) * Math.PI) / 180),
+    x: tipPt.x + arrowLen * Math.cos(((backAngle - 28) * Math.PI) / 180),
+    y: tipPt.y + arrowLen * Math.sin(((backAngle - 28) * Math.PI) / 180),
   };
   const arrowOpacity = arcLength > 0 ? Math.max(0, 1 - dashOffset / arcLength) : 1;
 
@@ -541,7 +547,7 @@ function GrindMovementDial({
       <circle cx={targetDotPt.x} cy={targetDotPt.y} r={size * 0.052} fill={color} opacity={arrowOpacity} />
       <circle cx={targetDotPt.x} cy={targetDotPt.y} r={size * 0.024} fill="white" opacity={arrowOpacity} />
       <polygon
-        points={`${endPt.x},${endPt.y} ${arrowL.x},${arrowL.y} ${arrowR2.x},${arrowR2.y}`}
+        points={`${tipPt.x},${tipPt.y} ${arrowL.x},${arrowL.y} ${arrowR2.x},${arrowR2.y}`}
         fill={color} opacity={arrowOpacity} />
 
       {/* Center: click count + revolutions */}
