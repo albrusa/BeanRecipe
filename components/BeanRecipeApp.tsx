@@ -441,7 +441,7 @@ function GrindMovementDial({
   const outerR   = size * 0.45;
   const innerR   = size * 0.28;
   const tickOutR = outerR - 2;
-  const arcR     = size * 0.335;
+  const arcR     = size * 0.305;
 
   const sweepClicks = remClicks === 0 ? cpr : remClicks;
   const sweepAngle  = Math.min((sweepClicks / cpr) * 360, 359.5);
