@@ -471,28 +471,30 @@ function GrindMovementDial({
   const currentAngle = clickToAngleDeg(currentPhysical, cpr);
   const targetAngle  = clickToAngleDeg(targetPhysical, cpr);
   // goRight (finer) = grinder turns clockwise = physical ring moves CCW on SVG (decreasing angle)
-  const endAngle     = goRight ? currentAngle - sweepAngle : currentAngle + sweepAngle;
+  const endAngle    = goRight ? currentAngle - sweepAngle : currentAngle + sweepAngle;
+  // Stop the arc just before the destination dot (gap = dot radius + small margin)
+  const stopDelta   = ((size * 0.05 + size * 0.02) / arcR) * (180 / Math.PI);
+  const arcEndAngle = goRight ? endAngle + stopDelta : endAngle - stopDelta;
 
   const startPt     = polarToXY(cx, cy, currentAngle, arcR);
-  const endPt       = polarToXY(cx, cy, endAngle, arcR);
+  const arcEndPt    = polarToXY(cx, cy, arcEndAngle, arcR);
   const targetDotPt = polarToXY(cx, cy, targetAngle, arcR);
 
   const largeArc  = sweepAngle > 180 ? 1 : 0;
   const sweepFlag = goRight ? 0 : 1;
-  const arcPath   = `M ${startPt.x} ${startPt.y} A ${arcR} ${arcR} 0 ${largeArc} ${sweepFlag} ${endPt.x} ${endPt.y}`;
+  const arcPath   = `M ${startPt.x} ${startPt.y} A ${arcR} ${arcR} 0 ${largeArc} ${sweepFlag} ${arcEndPt.x} ${arcEndPt.y}`;
 
-  const tangentAngle = goRight ? endAngle - 90 : endAngle + 90;
-  const backAngle = tangentAngle + 180;
-  // Chevron arms: two short lines meeting at the arc endpoint
+  const chevTangent = goRight ? arcEndAngle - 90 : arcEndAngle + 90;
+  const chevBack    = chevTangent + 180;
   const chevLen = size * 0.055;
   const chevAngle = 32;
   const chevL = {
-    x: endPt.x + chevLen * Math.cos(((backAngle + chevAngle) * Math.PI) / 180),
-    y: endPt.y + chevLen * Math.sin(((backAngle + chevAngle) * Math.PI) / 180),
+    x: arcEndPt.x + chevLen * Math.cos(((chevBack + chevAngle) * Math.PI) / 180),
+    y: arcEndPt.y + chevLen * Math.sin(((chevBack + chevAngle) * Math.PI) / 180),
   };
   const chevR = {
-    x: endPt.x + chevLen * Math.cos(((backAngle - chevAngle) * Math.PI) / 180),
-    y: endPt.y + chevLen * Math.sin(((backAngle - chevAngle) * Math.PI) / 180),
+    x: arcEndPt.x + chevLen * Math.cos(((chevBack - chevAngle) * Math.PI) / 180),
+    y: arcEndPt.y + chevLen * Math.sin(((chevBack - chevAngle) * Math.PI) / 180),
   };
   const arrowOpacity = arcLength > 0 ? Math.max(0, 1 - dashOffset / arcLength) : 1;
 
@@ -545,7 +547,7 @@ function GrindMovementDial({
 
       {/* Chevron arrowhead (same stroke weight as arc) */}
       <polyline
-        points={`${chevL.x},${chevL.y} ${endPt.x},${endPt.y} ${chevR.x},${chevR.y}`}
+        points={`${chevL.x},${chevL.y} ${arcEndPt.x},${arcEndPt.y} ${chevR.x},${chevR.y}`}
         fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"
         opacity={arrowOpacity} />
 
