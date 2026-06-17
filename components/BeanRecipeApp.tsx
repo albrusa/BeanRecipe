@@ -470,17 +470,18 @@ function GrindMovementDial({
 
   const currentAngle = clickToAngleDeg(currentPhysical, cpr);
   const targetAngle  = clickToAngleDeg(targetPhysical, cpr);
-  const endAngle     = goRight ? currentAngle + sweepAngle : currentAngle - sweepAngle;
+  // goRight (finer) = grinder turns clockwise = physical ring moves CCW on SVG (decreasing angle)
+  const endAngle     = goRight ? currentAngle - sweepAngle : currentAngle + sweepAngle;
 
   const startPt     = polarToXY(cx, cy, currentAngle, arcR);
   const endPt       = polarToXY(cx, cy, endAngle, arcR);
   const targetDotPt = polarToXY(cx, cy, targetAngle, arcR);
 
   const largeArc  = sweepAngle > 180 ? 1 : 0;
-  const sweepFlag = goRight ? 1 : 0;
+  const sweepFlag = goRight ? 0 : 1;
   const arcPath   = `M ${startPt.x} ${startPt.y} A ${arcR} ${arcR} 0 ${largeArc} ${sweepFlag} ${endPt.x} ${endPt.y}`;
 
-  const tangentAngle = goRight ? endAngle + 90 : endAngle - 90;
+  const tangentAngle = goRight ? endAngle - 90 : endAngle + 90;
   const arrowLen = size * 0.065;
   const backAngle = tangentAngle + 180;
   const arrowL = {
@@ -532,18 +533,16 @@ function GrindMovementDial({
         strokeWidth={size * 0.038} strokeLinecap="round"
         strokeDasharray={arcLength} strokeDashoffset={dashOffset} />
 
-      {/* Arrowhead at end (fades in) */}
+      {/* Start dot (current — blue) */}
+      <circle cx={startPt.x} cy={startPt.y} r={size * 0.058} fill="#3b82f6" />
+      <circle cx={startPt.x} cy={startPt.y} r={size * 0.026} fill="white" />
+
+      {/* End dot + arrowhead at target (fades in with arc) */}
+      <circle cx={targetDotPt.x} cy={targetDotPt.y} r={size * 0.052} fill={color} opacity={arrowOpacity} />
+      <circle cx={targetDotPt.x} cy={targetDotPt.y} r={size * 0.024} fill="white" opacity={arrowOpacity} />
       <polygon
         points={`${endPt.x},${endPt.y} ${arrowL.x},${arrowL.y} ${arrowR2.x},${arrowR2.y}`}
         fill={color} opacity={arrowOpacity} />
-
-      {/* Start dot (current — blue) */}
-      <circle cx={startPt.x} cy={startPt.y} r={size * 0.052} fill="#3b82f6" />
-      <circle cx={startPt.x} cy={startPt.y} r={size * 0.024} fill="white" />
-
-      {/* End dot (target — arc color) */}
-      <circle cx={targetDotPt.x} cy={targetDotPt.y} r={size * 0.044} fill={color} opacity={0.3} />
-      <circle cx={targetDotPt.x} cy={targetDotPt.y} r={size * 0.027} fill={color} />
 
       {/* Center: click count + revolutions */}
       <text x={cx} y={cy - (fullRevs > 0 ? size * 0.06 : 0)} textAnchor="middle"
