@@ -482,21 +482,17 @@ function GrindMovementDial({
   const arcPath   = `M ${startPt.x} ${startPt.y} A ${arcR} ${arcR} 0 ${largeArc} ${sweepFlag} ${endPt.x} ${endPt.y}`;
 
   const tangentAngle = goRight ? endAngle - 90 : endAngle + 90;
-  const arrowLen = size * 0.048;
   const backAngle = tangentAngle + 180;
-  // Tip lands on the edge of the orange circle, not its centre
-  const orangeDotR = size * 0.052;
-  const tipPt = {
-    x: endPt.x + orangeDotR * Math.cos((backAngle * Math.PI) / 180),
-    y: endPt.y + orangeDotR * Math.sin((backAngle * Math.PI) / 180),
+  // Chevron arms: two short lines meeting at the arc endpoint
+  const chevLen = size * 0.055;
+  const chevAngle = 32;
+  const chevL = {
+    x: endPt.x + chevLen * Math.cos(((backAngle + chevAngle) * Math.PI) / 180),
+    y: endPt.y + chevLen * Math.sin(((backAngle + chevAngle) * Math.PI) / 180),
   };
-  const arrowL = {
-    x: tipPt.x + arrowLen * Math.cos(((backAngle + 28) * Math.PI) / 180),
-    y: tipPt.y + arrowLen * Math.sin(((backAngle + 28) * Math.PI) / 180),
-  };
-  const arrowR2 = {
-    x: tipPt.x + arrowLen * Math.cos(((backAngle - 28) * Math.PI) / 180),
-    y: tipPt.y + arrowLen * Math.sin(((backAngle - 28) * Math.PI) / 180),
+  const chevR = {
+    x: endPt.x + chevLen * Math.cos(((backAngle - chevAngle) * Math.PI) / 180),
+    y: endPt.y + chevLen * Math.sin(((backAngle - chevAngle) * Math.PI) / 180),
   };
   const arrowOpacity = arcLength > 0 ? Math.max(0, 1 - dashOffset / arcLength) : 1;
 
@@ -543,12 +539,15 @@ function GrindMovementDial({
       <circle cx={startPt.x} cy={startPt.y} r={size * 0.058} fill="#3b82f6" />
       <circle cx={startPt.x} cy={startPt.y} r={size * 0.026} fill="white" />
 
-      {/* End dot + arrowhead at target (fades in with arc) */}
-      <circle cx={targetDotPt.x} cy={targetDotPt.y} r={size * 0.052} fill={color} opacity={arrowOpacity} />
-      <circle cx={targetDotPt.x} cy={targetDotPt.y} r={size * 0.024} fill="white" opacity={arrowOpacity} />
-      <polygon
-        points={`${tipPt.x},${tipPt.y} ${arrowL.x},${arrowL.y} ${arrowR2.x},${arrowR2.y}`}
-        fill={color} opacity={arrowOpacity} />
+      {/* End dot at target (fades in with arc) */}
+      <circle cx={targetDotPt.x} cy={targetDotPt.y} r={size * 0.05} fill={color} opacity={arrowOpacity} />
+      <circle cx={targetDotPt.x} cy={targetDotPt.y} r={size * 0.022} fill="white" opacity={arrowOpacity} />
+
+      {/* Chevron arrowhead (same stroke weight as arc) */}
+      <polyline
+        points={`${chevL.x},${chevL.y} ${endPt.x},${endPt.y} ${chevR.x},${chevR.y}`}
+        fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"
+        opacity={arrowOpacity} />
 
       {/* Center: click count + revolutions */}
       <text x={cx} y={cy - (fullRevs > 0 ? size * 0.06 : 0)} textAnchor="middle"
